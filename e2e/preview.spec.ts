@@ -31,6 +31,7 @@ test('JSON opens as formatted code with a key outline', async ({ page }) => {
   await expect(page.locator('.json-outline')).toContainText('service');
   await expect(page.locator('.json-outline')).not.toContainText('name');
   await expect(page.locator('.cm-content')).toContainText('api');
+  await expect(page.locator('[data-ffm-diagnostics]')).toHaveCount(0);
   const viewport = await page.locator('.document-viewport').boundingBox();
   const editor = await page.locator('.cm-editor').boundingBox();
   expect(editor?.height).toBe(viewport?.height);

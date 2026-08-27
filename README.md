@@ -57,11 +57,12 @@ pnpm build:dev-dmg
 
 ## Publish a release
 
-Set the app version in `src-tauri/tauri.conf.json`, then push a matching tag:
+Set the same version in `package.json`, `src-tauri/tauri.conf.json`, and
+`src-tauri/Cargo.toml`, then push a matching tag:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The release workflow tests the project, builds the Apple Silicon app on GitHub's macOS runner, verifies its ad-hoc signature, and publishes the ZIP plus its SHA-256 checksum. `install.sh` always installs the latest published release.
