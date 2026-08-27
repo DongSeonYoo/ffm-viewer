@@ -8,6 +8,7 @@
     "build:web": "tsc --noEmit && vite build",
     "build": "pnpm build:web && tauri build",
     "test": "vitest run",
+    "test:install": "sh tests/install.sh",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "tauri": "tauri"

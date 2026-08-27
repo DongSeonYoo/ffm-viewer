@@ -31,6 +31,9 @@
     "active": true,
     "category": "DeveloperTool",
     "shortDescription": "A fast local viewer for Markdown and JSON documents",
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],

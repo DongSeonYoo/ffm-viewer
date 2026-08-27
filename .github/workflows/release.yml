@@ -1,0 +1,157 @@
+name: Release macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      APP_BUNDLE_PATH: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/FFM Viewer.app
+      ASSET_NAME: FFM-Viewer-macos-arm64.zip
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --target aarch64-apple-darwin
+          rustup default stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches app version
+        if: github.event_name == 'push'
+        run: |
+          app_version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$app_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match app version $app_version" >&2
+            exit 1
+          fi
+
+      - name: Run frontend tests
+        run: pnpm test
+
+      - name: Run installer tests
+        run: pnpm test:install
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Apple Silicon app
+        run: pnpm tauri build --target aarch64-apple-darwin --bundles app
+
+      - name: Verify app signature
+        run: codesign --verify --deep --strict "$APP_BUNDLE_PATH"
+
+      - name: Package installer asset
+        run: |
+          mkdir -p release
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP_BUNDLE_PATH" \
+            "release/$ASSET_NAME"
+          cd release
+          shasum -a 256 "$ASSET_NAME" > "$ASSET_NAME.sha256"
+
+      - name: Verify packaged installer end to end
+        run: |
+          install_dir=$(mktemp -d "$RUNNER_TEMP/ffm-viewer-install.XXXXXX")
+          FFM_RELEASE_BASE_URL="file://$GITHUB_WORKSPACE/release" \
+          FFM_INSTALL_DIR="$install_dir" \
+          FFM_SKIP_REGISTER=1 \
+          FFM_SKIP_LAUNCH=1 \
+            ./install.sh
+
+          installed_app="$install_dir/FFM Viewer.app"
+          installed_binary="$installed_app/Contents/MacOS/ffm-viewer"
+          bundle_id=$(
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+              "$installed_app/Contents/Info.plist"
+          )
+
+          [ "$bundle_id" = "io.github.dongseonyoo.ffm-viewer" ] || {
+            echo "Unexpected installed bundle ID: $bundle_id" >&2
+            exit 1
+          }
+          [ "$(lipo -archs "$installed_binary")" = "arm64" ] || {
+            echo "Installed executable is not arm64" >&2
+            lipo -info "$installed_binary" >&2
+            exit 1
+          }
+          codesign --verify --deep --strict --verbose=2 "$installed_app"
+
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-arm64-release-assets
+          path: |
+            release/FFM-Viewer-macos-arm64.zip
+            release/FFM-Viewer-macos-arm64.zip.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release:
+    needs: build-macos-arm64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ASSET_NAME: FFM-Viewer-macos-arm64.zip
+
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-arm64-release-assets
+          path: release
+
+      - name: Verify transferred release assets
+        run: |
+          cd release
+          sha256sum -c "$ASSET_NAME.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"
+          if gh api "$release_endpoint" >/dev/null 2>release-check.err; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          if ! grep -q '(HTTP 404)' release-check.err; then
+            echo "Could not verify whether release $GITHUB_REF_NAME exists:" >&2
+            cat release-check.err >&2
+            exit 1
+          fi
+
+          gh release create "$GITHUB_REF_NAME" \
+            "release/$ASSET_NAME" \
+            "release/$ASSET_NAME.sha256" \
+            --title "FFM Viewer $GITHUB_REF_NAME" \
+            --generate-notes
