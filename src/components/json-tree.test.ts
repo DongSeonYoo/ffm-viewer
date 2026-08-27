@@ -1,10 +1,43 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createJsonCodeView } from './json-tree';
 import { formatJsonDocument } from '../lib/json-document';
+
+const diagnosticsEnabled = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
+const diagnosticsIt = diagnosticsEnabled ? it : it.skip;
+let diagnosticsResizeObserverDisconnects = 0;
+
+class TestResizeObserver {
+  private observed = 0;
+  observe(): void { this.observed += 1; }
+  disconnect(): void {
+    if (this.observed === 5) diagnosticsResizeObserverDisconnects += 1;
+  }
+}
 
 describe('createJsonCodeView', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    diagnosticsResizeObserverDisconnects = 0;
+    if (diagnosticsEnabled) vi.stubGlobal('ResizeObserver', TestResizeObserver);
+  });
+
+  afterAll(() => vi.unstubAllGlobals());
+
+  it('applies the Tauri CSP nonce to CodeMirror runtime styles', () => {
+    const nonceSource = document.createElement('style');
+    nonceSource.id = 'ffm-csp-nonce-source';
+    nonceSource.nonce = 'ffm-test-nonce';
+    nonceSource.textContent = ':root {}';
+    document.head.append(nonceSource);
+    const existingStyles = new Set(document.head.querySelectorAll('style'));
+    const viewer = createJsonCodeView(formatJsonDocument('{"ready":true}'));
+    document.body.append(viewer);
+
+    const codeMirrorStyle = Array.from(document.head.querySelectorAll('style'))
+      .find((style) => !existingStyles.has(style));
+    expect(codeMirrorStyle?.nonce).toBe('ffm-test-nonce');
+    viewer.destroy();
+    nonceSource.remove();
   });
 
   it('shows formatted read-only code and top-level outline keys', () => {
@@ -40,7 +73,40 @@ describe('createJsonCodeView', () => {
 
     name?.click();
     expect(viewer.querySelector('.cm-activeLine')?.textContent).toContain('"name"');
+    expect(name?.getAttribute('aria-current')).toBe('location');
+
+    const service = viewer.querySelector<HTMLButtonElement>(
+      '[data-action="jump"][data-outline-label="service"]',
+    );
+    service?.click();
+    expect(service?.getAttribute('aria-current')).toBe('location');
+    expect(name?.hasAttribute('aria-current')).toBe(false);
+    expect(name?.closest('.json-outline-node')?.classList.contains('is-active')).toBe(false);
+    expect(service?.closest('.json-outline-node')?.classList.contains('is-active')).toBe(true);
+    expect(viewer.querySelectorAll('.json-outline-node.is-active')).toHaveLength(1);
     viewer.destroy();
+  });
+
+  diagnosticsIt('replaces and cleans up the dev diagnostics panel', () => {
+    const removeEventListener = vi.spyOn(EventTarget.prototype, 'removeEventListener');
+    const removeWindowListener = vi.spyOn(window, 'removeEventListener');
+    const cancelAnimationFrame = vi.spyOn(window, 'cancelAnimationFrame');
+    const first = createJsonCodeView(formatJsonDocument('{"first":true}'));
+    const second = createJsonCodeView(formatJsonDocument('{"second":true}'));
+    document.body.append(first, second);
+
+    expect(document.querySelectorAll('[data-ffm-diagnostics]')).toHaveLength(1);
+    first.destroy();
+    expect(document.querySelectorAll('[data-ffm-diagnostics]')).toHaveLength(1);
+    second.destroy();
+    expect(document.querySelector('[data-ffm-diagnostics]')).toBeNull();
+    expect(diagnosticsResizeObserverDisconnects).toBe(2);
+    expect(removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+    expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function));
+    expect(cancelAnimationFrame).toHaveBeenCalled();
+    removeEventListener.mockRestore();
+    removeWindowListener.mockRestore();
+    cancelAnimationFrame.mockRestore();
   });
 
   it('pages large arrays instead of filling the outline DOM', () => {

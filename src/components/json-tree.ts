@@ -18,6 +18,8 @@ import {
 import { tags } from '@lezer/highlight';
 
 const PAGE_SIZE = 100;
+const DIAGNOSTICS_ENABLED = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
+let activeDiagnosticsDestroy: (() => void) | undefined;
 const VALUE_NODES = new Set([
   'Object',
   'Array',
@@ -53,6 +55,171 @@ const jsonHighlightStyle = HighlightStyle.define([
   { tag: tags.bool, color: 'var(--json-boolean)' },
   { tag: tags.null, color: 'var(--json-null)' },
 ]);
+
+function elementMetrics(element: HTMLElement | null) {
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  return {
+    connected: element.isConnected,
+    rect: {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    },
+    client: { width: element.clientWidth, height: element.clientHeight },
+    scroll: {
+      left: Math.round(element.scrollLeft),
+      top: Math.round(element.scrollTop),
+      width: element.scrollWidth,
+      height: element.scrollHeight,
+    },
+    style: {
+      display: style.display,
+      position: style.position,
+      width: style.width,
+      height: style.height,
+      minHeight: style.minHeight,
+      overflow: style.overflow,
+      flex: style.flex,
+      gridRows: style.gridTemplateRows,
+    },
+  };
+}
+
+function attachDiagnostics(
+  wrapper: HTMLElement,
+  code: HTMLElement,
+  view: EditorView,
+  source: string,
+): { record(reason: string): void; destroy(): void } {
+  activeDiagnosticsDestroy?.();
+  const panel = document.createElement('details');
+  panel.open = true;
+  panel.dataset.ffmDiagnostics = '';
+  panel.className = 'ffm-diagnostics';
+  panel.setAttribute('aria-label', 'FFM diagnostics');
+
+  const summary = document.createElement('summary');
+  summary.textContent = 'FFM diagnostics';
+  summary.className = 'ffm-diagnostics-summary';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.textContent = 'Copy';
+  copy.className = 'ffm-diagnostics-copy';
+  const output = document.createElement('pre');
+  output.className = 'ffm-diagnostics-output';
+  panel.append(summary, copy, output);
+  document.body.append(panel);
+
+  const startedAt = performance.now();
+  const sourceBytes = new TextEncoder().encode(source).length;
+  const history: Array<Record<string, unknown>> = [];
+  let frameId: number | undefined;
+  let destroyed = false;
+  const pendingReasons = new Set<string>();
+  const writeSnapshot = (reason: string) => {
+    const viewportHost = wrapper.parentElement;
+    const shell = viewportHost?.parentElement;
+    const content = elementMetrics(view.contentDOM);
+    const latest = {
+      atMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      reason,
+      document: {
+        bytes: sourceBytes,
+        lines: view.state.doc.lines,
+        visibility: document.visibilityState,
+        devicePixelRatio: window.devicePixelRatio,
+        windowScrollY: Math.round(window.scrollY),
+        bodyHeight: document.body.scrollHeight,
+        nonceElements: Array.from(document.querySelectorAll<HTMLElement>('[nonce]')).map((element) => ({
+          tag: element.tagName,
+          rel: element.getAttribute('rel'),
+          nonce: element.nonce,
+        })),
+        styleTags: Array.from(document.head.querySelectorAll('style')).map((style) => ({
+          nonce: style.nonce,
+          textLength: style.textContent?.length ?? 0,
+          rules: style.sheet?.cssRules.length ?? null,
+        })),
+      },
+      codeMirror: {
+        contentHeight: Math.round(view.contentHeight),
+        viewport: { from: view.viewport.from, to: view.viewport.to },
+        visibleRanges: view.visibleRanges.map(({ from, to }) => ({ from, to })),
+        selection: {
+          anchor: view.state.selection.main.anchor,
+          head: view.state.selection.main.head,
+        },
+        contentTop: content?.rect.y ?? 0,
+      },
+      elements: {
+        shell: elementMetrics(shell ?? null),
+        viewportHost: elementMetrics(viewportHost),
+        wrapper: elementMetrics(wrapper),
+        code: elementMetrics(code),
+        editor: elementMetrics(view.dom),
+        scroller: elementMetrics(view.scrollDOM),
+        content,
+      },
+    };
+    history.push({
+      atMs: latest.atMs,
+      reason,
+      editorHeight: view.dom.clientHeight,
+      clientHeight: view.scrollDOM.clientHeight,
+      scrollHeight: view.scrollDOM.scrollHeight,
+      scrollTop: Math.round(view.scrollDOM.scrollTop),
+      contentTop: latest.codeMirror.contentTop,
+      viewportFrom: view.viewport.from,
+      selection: view.state.selection.main.anchor,
+    });
+    if (history.length > 30) history.shift();
+    output.textContent = JSON.stringify({ latest, history }, null, 2);
+  };
+
+  const record = (reason: string) => {
+    if (destroyed) return;
+    pendingReasons.add(reason);
+    if (frameId !== undefined) return;
+    frameId = requestAnimationFrame(() => {
+      frameId = undefined;
+      const reasons = Array.from(pendingReasons).join(',');
+      pendingReasons.clear();
+      writeSnapshot(reasons);
+    });
+  };
+
+  const onScroll = () => record('scroll');
+  const onWindowResize = () => record('window-resize');
+  view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onWindowResize);
+  const resizeObserver = new ResizeObserver(() => record('resize-observer'));
+  [wrapper, code, view.dom, view.scrollDOM, view.contentDOM].forEach((element) => {
+    resizeObserver.observe(element);
+  });
+  copy.addEventListener('click', () => {
+    void navigator.clipboard.writeText(output.textContent ?? '').catch(() => undefined);
+  });
+
+  const destroy = () => {
+    if (destroyed) return;
+    destroyed = true;
+    if (frameId !== undefined) cancelAnimationFrame(frameId);
+    resizeObserver.disconnect();
+    view.scrollDOM.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onWindowResize);
+    panel.remove();
+    if (activeDiagnosticsDestroy === destroy) activeDiagnosticsDestroy = undefined;
+  };
+  activeDiagnosticsDestroy = destroy;
+
+  return {
+    record,
+    destroy,
+  };
+}
 
 function propertyValue(node: JsonSyntaxNode): JsonSyntaxNode | null {
   return node.lastChild?.name === 'PropertyName' ? null : node.lastChild;
@@ -115,6 +282,8 @@ function createOutline(
 
   const root = syntaxRoot.firstChild;
   if (!root || !isExpandable(root)) return outline;
+  let activeNode: HTMLElement | undefined;
+  let activeJump: HTMLButtonElement | undefined;
 
   const renderPage = (
     container: JsonSyntaxNode,
@@ -171,6 +340,12 @@ function createOutline(
       jump.dataset.outlineLabel = item.label;
       jump.textContent = item.label;
       jump.addEventListener('click', () => {
+        activeNode?.classList.remove('is-active');
+        activeJump?.removeAttribute('aria-current');
+        node.classList.add('is-active');
+        jump.setAttribute('aria-current', 'location');
+        activeNode = node;
+        activeJump = jump;
         view.dispatch({
           selection: { anchor: item.from },
           effects: EditorView.scrollIntoView(item.from, { y: 'start', yMargin: 48 }),
@@ -203,12 +378,15 @@ export function createJsonCodeView(source: string): JsonCodeViewElement {
 
   const code = document.createElement('div');
   code.className = 'json-code-editor';
+  const cspNonce = document.querySelector<HTMLStyleElement>('#ffm-csp-nonce-source')?.nonce;
 
+  let recordDiagnostics: (reason: string) => void = () => undefined;
   const state = EditorState.create({
     doc: source,
     extensions: [
       json(),
       EditorState.readOnly.of(true),
+      ...(cspNonce ? [EditorView.cspNonce.of(cspNonce)] : []),
       EditorView.contentAttributes.of({ 'aria-readonly': 'true' }),
       lineNumbers(),
       foldGutter(),
@@ -217,6 +395,16 @@ export function createJsonCodeView(source: string): JsonCodeViewElement {
       search({ top: true }),
       keymap.of([...searchKeymap, ...foldKeymap]),
       syntaxHighlighting(jsonHighlightStyle),
+      ...(DIAGNOSTICS_ENABLED
+        ? [EditorView.updateListener.of((update) => {
+            const reasons = [
+              update.geometryChanged ? 'geometry' : '',
+              update.viewportChanged ? 'viewport' : '',
+              update.selectionSet ? 'selection' : '',
+            ].filter(Boolean);
+            if (reasons.length > 0) recordDiagnostics(`view-update:${reasons.join(',')}`);
+          })]
+        : []),
       EditorView.theme({
         '&': { height: '100%' },
         '.cm-scroller': { overflow: 'auto' },
@@ -225,10 +413,20 @@ export function createJsonCodeView(source: string): JsonCodeViewElement {
     ],
   });
   const view = new EditorView({ state, parent: code });
+  let destroyDiagnostics: () => void = () => undefined;
 
   // ponytail: full parse gives the outline stable offsets; revisit only if profiling says it matters.
   const outlineTree = jsonLanguage.parser.parse(source);
   wrapper.append(createOutline(view, source, outlineTree.topNode), code);
-  wrapper.destroy = () => view.destroy();
+  if (DIAGNOSTICS_ENABLED) {
+    const diagnostics = attachDiagnostics(wrapper, code, view, source);
+    recordDiagnostics = diagnostics.record;
+    destroyDiagnostics = diagnostics.destroy;
+    recordDiagnostics('attached-panel');
+  }
+  wrapper.destroy = () => {
+    destroyDiagnostics();
+    view.destroy();
+  };
   return wrapper;
 }
