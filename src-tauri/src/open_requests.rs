@@ -111,7 +111,10 @@ mod tests {
             "photo.jpeg",
             "vector.svg",
         ] {
-            assert!(is_supported_path(Path::new(path)), "{path} should be supported");
+            assert!(
+                is_supported_path(Path::new(path)),
+                "{path} should be supported"
+            );
         }
         assert!(!is_supported_path(Path::new("program.exe")));
     }

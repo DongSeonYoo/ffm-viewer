@@ -9,6 +9,7 @@ import type {
   Dispose,
   DocumentPayload,
   PathHandler,
+  ScratchRecovery,
 } from './desktop-bridge';
 
 interface PathEvent {
@@ -38,6 +39,7 @@ export function createTauriBridge(): DesktopBridge {
   let errorListener: Promise<UnlistenFn> | undefined;
   let changeTimer: number | undefined;
   let watchGeneration = 0;
+  let recoveryWrite: Promise<void> = Promise.resolve();
 
   return {
     async chooseDocuments() {
@@ -140,6 +142,20 @@ export function createTauriBridge(): DesktopBridge {
       if (!path) return false;
       await invoke<void>('write_document', { path, content });
       return true;
+    },
+
+    loadRecovery() {
+      return invoke<ScratchRecovery[]>('load_recovery');
+    },
+
+    persistRecovery(scratches) {
+      const snapshot = scratches.map((scratch) => ({ ...scratch }));
+      const queued = recoveryWrite.then(
+        () => invoke<void>('persist_recovery', { scratches: snapshot }),
+        () => invoke<void>('persist_recovery', { scratches: snapshot }),
+      );
+      recoveryWrite = queued.catch(() => undefined);
+      return queued;
     },
 
     async onCloseRequested(handler) {

@@ -100,6 +100,34 @@ describe('createTauriBridge', () => {
     });
   });
 
+  it('serializes recovery writes so an older write cannot finish last', async () => {
+    const firstWrite = deferred<void>();
+    tauri.invoke.mockImplementation((command: string) => {
+      if (command === 'persist_recovery') return firstWrite.promise;
+      return Promise.resolve();
+    });
+    const bridge = createTauriBridge();
+    const first = bridge.persistRecovery([
+      { name: 'Untitled 1', kind: 'markdown', content: '# First' },
+    ]);
+    const second = bridge.persistRecovery([
+      { name: 'Untitled 2', kind: 'markdown', content: '# Second' },
+    ]);
+
+    await vi.waitFor(() => expect(tauri.invoke).toHaveBeenCalledTimes(1));
+    firstWrite.resolve();
+    await Promise.all([first, second]);
+
+    expect(tauri.invoke.mock.calls).toEqual([
+      ['persist_recovery', {
+        scratches: [{ name: 'Untitled 1', kind: 'markdown', content: '# First' }],
+      }],
+      ['persist_recovery', {
+        scratches: [{ name: 'Untitled 2', kind: 'markdown', content: '# Second' }],
+      }],
+    ]);
+  });
+
   it('prevents native close and destroys the window only after approval', async () => {
     const preventDefault = vi.fn();
     const approve = vi.fn().mockResolvedValue(true);

@@ -1,4 +1,4 @@
-import type { DesktopBridge, DocumentPayload } from './desktop-bridge';
+import type { DesktopBridge, DocumentPayload, ScratchRecovery } from './desktop-bridge';
 
 const MARKDOWN_FIXTURE: DocumentPayload = {
   path: '/fixtures/quiet-document.md',
@@ -95,6 +95,7 @@ export function createBrowserPreviewBridge(
     : [SINGLE_FIXTURES[fixture]];
   let pending = true;
   let nextChoice = fixture === 'multi' ? 1 : 0;
+  let recovery: readonly ScratchRecovery[] = [];
 
   return {
     chooseDocuments: async () => {
@@ -119,6 +120,10 @@ export function createBrowserPreviewBridge(
     resolveLocalImage: async () => null,
     confirmClose: async () => 'discard',
     saveDocument: async () => false,
+    loadRecovery: async () => recovery,
+    persistRecovery: async (scratches) => {
+      recovery = scratches.map((scratch) => ({ ...scratch }));
+    },
     onCloseActiveTab: async () => () => undefined,
     onCloseRequested: async () => () => undefined,
   };

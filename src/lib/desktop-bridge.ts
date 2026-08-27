@@ -10,6 +10,13 @@ export interface DocumentPayload {
 export type Dispose = () => void;
 export type PathHandler = (path: string) => void;
 export type CloseDecision = 'save' | 'discard' | 'cancel';
+export type ScratchRecoveryKind = Exclude<DocumentKind, 'image'>;
+
+export interface ScratchRecovery {
+  readonly name: string;
+  readonly kind: ScratchRecoveryKind;
+  readonly content: string;
+}
 
 export interface DesktopBridge {
   chooseDocuments(): Promise<readonly string[]>;
@@ -30,6 +37,8 @@ export interface DesktopBridge {
     kind: Exclude<DocumentKind, 'image'>,
     content: string,
   ): Promise<boolean>;
+  loadRecovery(): Promise<readonly ScratchRecovery[]>;
+  persistRecovery(scratches: readonly ScratchRecovery[]): Promise<void>;
   onCloseActiveTab(handler: () => void): Promise<Dispose>;
   onCloseRequested(handler: () => Promise<boolean>): Promise<Dispose>;
 }

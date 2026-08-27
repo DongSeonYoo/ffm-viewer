@@ -3,7 +3,12 @@ import {
   createTextCodeView,
   type CodeViewElement,
 } from './components/json-tree';
-import type { DesktopBridge, DocumentKind, DocumentPayload } from './lib/desktop-bridge';
+import type {
+  DesktopBridge,
+  DocumentKind,
+  DocumentPayload,
+  ScratchRecovery,
+} from './lib/desktop-bridge';
 import { formatJsonDocument } from './lib/json-document';
 import { renderMarkdown } from './lib/markdown';
 import {
@@ -17,6 +22,7 @@ const IMAGE_CONCURRENCY = 3;
 const MAX_IMAGE_DATA_CHARS = 24 * 1024 * 1024;
 const MAX_HISTORY = 100;
 const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
+const RECOVERY_WARNING = 'Recovery unavailable. Keep this tab open or save it to a file.';
 type ScratchViewKind = Exclude<DocumentKind, 'json' | 'image'>;
 const SCRATCH_VIEW_ACTIONS: ReadonlyArray<{
   readonly kind: ScratchViewKind;
@@ -183,8 +189,11 @@ export async function createApp(
   let renderSequence = 0;
   let readSequence = 0;
   let openQueue = Promise.resolve();
+  const pendingPastes: string[] = [];
+  let pasteBusy = false;
   let untitledCounter = 0;
   let activationRevision = 0;
+  let startupWarning: string | undefined;
 
   const shell = document.createElement('div');
   shell.className = 'app-shell';
@@ -274,10 +283,34 @@ export async function createApp(
   };
 
   const renderWarning = () => {
-    const message = activeTab()?.warning;
+    const message = activeTab()?.warning ?? startupWarning;
     warning.hidden = !message;
     warning.textContent = message ?? '';
   };
+
+  const recoverySnapshot = (excludedId?: string): ScratchRecovery[] => tabs
+    .filter((tab) => tab.id !== excludedId && tab.source === 'scratch' && tab.dirty)
+    .map((tab) => ({
+      name: tab.payload.name,
+      kind: tab.payload.kind as ScratchRecovery['kind'],
+      content: tab.payload.content,
+    }));
+
+  async function persistDirtyScratches(
+    changedTab?: OpenTab,
+    excludedId?: string,
+  ): Promise<boolean> {
+    try {
+      await bridge.persistRecovery(recoverySnapshot(excludedId));
+      if (changedTab?.warning === RECOVERY_WARNING) changedTab.warning = undefined;
+      return true;
+    } catch {
+      if (changedTab) changedTab.warning = RECOVERY_WARNING;
+      else startupWarning = RECOVERY_WARNING;
+      renderWarning();
+      return false;
+    }
+  }
 
   const renderFormatHint = () => {
     formatHint.replaceChildren();
@@ -294,7 +327,7 @@ export async function createApp(
     apply.type = 'button';
     apply.dataset.viewAs = hint;
     apply.textContent = `${label}로 보기`;
-    apply.addEventListener('click', () => applyScratchKind(hint));
+    apply.addEventListener('click', () => void applyScratchKind(hint));
     const dismiss = document.createElement('button');
     dismiss.type = 'button';
     dismiss.className = 'format-hint-dismiss';
@@ -535,21 +568,25 @@ export async function createApp(
     historyIndex = history.length - 1;
   };
 
-  function addScratchTab(): OpenTab {
+  function addScratchTab(recovery?: ScratchRecovery): OpenTab {
     snapshotScroll();
-    untitledCounter += 1;
+    const recoveredNumber = recovery?.name.match(/^Untitled (\d+)$/)?.[1];
+    untitledCounter = Math.max(
+      untitledCounter + 1,
+      recoveredNumber ? Number(recoveredNumber) : 0,
+    );
     const id = `scratch:${untitledCounter}`;
     const tab: OpenTab = {
       id,
       source: 'scratch',
       payload: {
         path: id,
-        name: `Untitled ${untitledCounter}`,
-        kind: 'markdown',
-        content: '',
+        name: recovery?.name ?? `Untitled ${untitledCounter}`,
+        kind: recovery?.kind ?? 'markdown',
+        content: recovery?.content ?? '',
       },
       scrollTop: 0,
-      dirty: false,
+      dirty: Boolean(recovery),
     };
     tabs.push(tab);
     setActiveId(id);
@@ -563,16 +600,17 @@ export async function createApp(
     renderActive();
   }
 
-  function applyScratchKind(kind: ScratchViewKind): void {
+  async function applyScratchKind(kind: ScratchViewKind): Promise<void> {
     const tab = activeTab();
     if (!tab || tab.source !== 'scratch') return;
     tab.payload = { ...tab.payload, kind };
     tab.hint = undefined;
+    await persistDirtyScratches(tab);
     renderChrome();
     renderActive();
   }
 
-  function pasteIntoScratch(source: string): void {
+  async function pasteIntoScratch(source: string): Promise<void> {
     let tab = activeTab();
     if (!tab || tab.source !== 'scratch' || tab.dirty || tab.payload.content) {
       tab = addScratchTab();
@@ -592,8 +630,22 @@ export async function createApp(
     tab.dirty = true;
     tab.hint = prepared.hint;
     tab.warning = undefined;
+    await persistDirtyScratches(tab);
     renderChrome();
     renderActive();
+  }
+
+  function enqueuePaste(source: string): void {
+    if (pasteBusy) {
+      pendingPastes.push(source);
+      return;
+    }
+    pasteBusy = true;
+    void pasteIntoScratch(source).finally(() => {
+      pasteBusy = false;
+      const next = pendingPastes.shift();
+      if (next) enqueuePaste(next);
+    });
   }
 
   async function installActiveWatcher(path: string): Promise<string | undefined> {
@@ -699,7 +751,7 @@ export async function createApp(
       );
       if (!saved) return false;
       tab.dirty = false;
-      return true;
+      return persistDirtyScratches(tab);
     } catch (error) {
       tab.warning = error instanceof Error
         ? error.message
@@ -714,7 +766,7 @@ export async function createApp(
     const decision = await bridge.confirmClose(tab.payload.name);
     if (decision === 'cancel') return false;
     if (decision === 'save') return saveScratch(tab);
-    return true;
+    return persistDirtyScratches(tab, tab.id);
   }
 
   function closeTab(id: string): void {
@@ -861,7 +913,7 @@ export async function createApp(
           name.textContent = action.label;
           item.append(type, name);
           item.addEventListener('click', () => {
-            applyScratchKind(action.kind);
+            void applyScratchKind(action.kind);
             closeQuickSwitcher();
           });
           list.append(item);
@@ -880,7 +932,7 @@ export async function createApp(
           ({ kind }) => kind === first?.dataset.quickActionKind,
         );
         if (id) activateTab(id);
-        else if (action) applyScratchKind(action.kind);
+        else if (action) void applyScratchKind(action.kind);
         closeQuickSwitcher();
       }
     });
@@ -967,10 +1019,16 @@ export async function createApp(
     const source = event.clipboardData?.getData('text/plain');
     if (!source) return;
     event.preventDefault();
-    pasteIntoScratch(source);
+    enqueuePaste(source);
   };
   window.addEventListener('paste', activePasteListener);
 
+  try {
+    const recovered = await bridge.loadRecovery();
+    for (const scratch of recovered) addScratchTab(scratch);
+  } catch {
+    startupWarning = 'Scratch recovery could not be loaded.';
+  }
   renderChrome();
   renderActive();
   await Promise.all([

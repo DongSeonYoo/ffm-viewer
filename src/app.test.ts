@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from './app-shell';
-import type { DesktopBridge, DocumentPayload } from './lib/desktop-bridge';
+import type {
+  DesktopBridge,
+  DocumentPayload,
+  ScratchRecovery,
+} from './lib/desktop-bridge';
 
 function markdownDocument(content = '# Read me'): DocumentPayload {
   return {
@@ -45,7 +49,10 @@ function pasteText(value: string): void {
   window.dispatchEvent(event);
 }
 
-function createBridge(documents: Record<string, DocumentPayload> = {}) {
+function createBridge(
+  documents: Record<string, DocumentPayload> = {},
+  recovery: readonly ScratchRecovery[] = [],
+) {
   let openHandler: ((path: string) => void) | undefined;
   let changeHandler: ((path: string) => void) | undefined;
   let watchErrorHandler: ((path: string) => void) | undefined;
@@ -73,6 +80,8 @@ function createBridge(documents: Record<string, DocumentPayload> = {}) {
     resolveLocalImage: vi.fn().mockResolvedValue(null),
     confirmClose: vi.fn().mockResolvedValue('discard'),
     saveDocument: vi.fn().mockResolvedValue(false),
+    loadRecovery: vi.fn().mockResolvedValue(recovery),
+    persistRecovery: vi.fn().mockResolvedValue(undefined),
     onCloseRequested: vi.fn(async (handler) => {
       closeHandler = handler;
       return () => undefined;
@@ -145,6 +154,36 @@ describe('createApp', () => {
         expect.stringContaining('second.json'),
       ]);
     expect(document.querySelector('.json-code-view')).not.toBeNull();
+  });
+
+  it('recovers dirty Scratch tabs before queued files without changing JSON digits', async () => {
+    const pending = markdownDocument('# Pending file');
+    const recovery: readonly ScratchRecovery[] = [{
+      name: 'Untitled 7',
+      kind: 'json',
+      content: '{"id":9223372036854775807}',
+    }];
+    const { bridge } = createBridge({ [pending.path]: pending }, recovery);
+    const order: string[] = [];
+    vi.mocked(bridge.loadRecovery).mockImplementation(async () => {
+      order.push('recovery');
+      return recovery;
+    });
+    vi.mocked(bridge.takePendingOpen).mockImplementation(async () => {
+      order.push('pending');
+      return [pending.path];
+    });
+
+    await createApp(document.querySelector('#app')!, bridge);
+
+    expect(order).toEqual(['recovery', 'pending']);
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    document.querySelector<HTMLButtonElement>('[data-open-file="scratch:7"]')?.click();
+    await vi.waitFor(() => {
+      expect(document.querySelector('.cm-content')?.textContent)
+        .toContain('9223372036854775807');
+    });
+    expect(document.querySelector('.open-file-dirty')).not.toBeNull();
   });
 
   it('renders a selected Markdown file as an article', async () => {
@@ -427,6 +466,21 @@ describe('createApp', () => {
     expect(document.querySelector('.open-file-dirty')).not.toBeNull();
   });
 
+  it('keeps pasted content visible and warns when recovery persistence fails', async () => {
+    const { bridge } = createBridge();
+    vi.mocked(bridge.persistRecovery).mockRejectedValue(new Error('disk unavailable'));
+    await createApp(document.querySelector('#app')!, bridge);
+
+    pasteText('# Still visible');
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('.markdown-document h1')?.textContent)
+        .toBe('Still visible');
+    });
+    expect(document.querySelector('.watch-warning')?.textContent)
+      .toContain('Recovery unavailable');
+  });
+
   it('opens a second Scratch tab instead of replacing pasted content', async () => {
     const { bridge } = createBridge();
     await createApp(document.querySelector('#app')!, bridge);
@@ -459,10 +513,12 @@ describe('createApp', () => {
 
     pasteText('server:\n  port: 4000\n  host: localhost');
 
-    await vi.waitFor(() => expect(document.querySelector('[data-format-hint]')).not.toBeNull());
-    expect(document.querySelector('.markdown-document')).not.toBeNull();
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
+    expect(document.querySelector<HTMLElement>('[data-format-hint]')?.hidden).toBe(false);
     document.querySelector<HTMLButtonElement>('[data-view-as="yaml"]')?.click();
-    expect(document.querySelector('.text-code-view')?.textContent).toContain('port: 4000');
+    await vi.waitFor(() => {
+      expect(document.querySelector('.text-code-view')?.textContent).toContain('port: 4000');
+    });
     expect(document.querySelector('.document-tab .document-type')?.textContent).toBe('YAML');
   });
 
@@ -478,7 +534,9 @@ describe('createApp', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
-    expect(document.querySelector('.text-code-view')?.textContent).toContain('port = 4000');
+    await vi.waitFor(() => {
+      expect(document.querySelector('.text-code-view')?.textContent).toContain('port = 4000');
+    });
     expect(document.querySelector('.document-tab .document-type')?.textContent).toBe('TOML');
   });
 
@@ -493,7 +551,7 @@ describe('createApp', () => {
 
     await vi.waitFor(() => expect(bridge.confirmClose).toHaveBeenCalledWith('Untitled 1'));
     expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
-    expect(document.body.textContent).toContain('Keep me');
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Keep me'));
   });
 
   it('saves a dirty Scratch document before closing it', async () => {
@@ -511,7 +569,20 @@ describe('createApp', () => {
       'markdown',
       '# Save me',
     ));
+    await vi.waitFor(() => expect(bridge.persistRecovery).toHaveBeenCalledWith([]));
     expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+  });
+
+  it('removes discarded Scratch content from recovery before closing the tab', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    pasteText('# Discard me');
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Discard me'));
+
+    document.querySelector<HTMLButtonElement>('[aria-label="Close Untitled 1"]')?.click();
+
+    await vi.waitFor(() => expect(bridge.persistRecovery).toHaveBeenCalledWith([]));
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0));
   });
 
   it('cancels application close when any dirty Scratch refuses to close', async () => {
