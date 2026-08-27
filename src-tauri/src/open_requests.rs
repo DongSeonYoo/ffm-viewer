@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 #[derive(Default)]
 struct OpenRequestInner {
     frontend_ready: bool,
-    pending: Option<String>,
+    pending: Vec<String>,
 }
 
 #[derive(Default)]
@@ -20,17 +20,12 @@ struct PathEvent {
 }
 
 impl OpenRequestState {
-    #[cfg(test)]
-    pub fn queue(&self, path: String) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.pending = Some(path);
-        }
-    }
-
-    pub fn mark_ready_and_take(&self) -> Option<String> {
-        let mut inner = self.inner.lock().ok()?;
+    pub fn mark_ready_and_take(&self) -> Vec<String> {
+        let Ok(mut inner) = self.inner.lock() else {
+            return Vec::new();
+        };
         inner.frontend_ready = true;
-        inner.pending.take()
+        std::mem::take(&mut inner.pending)
     }
 
     #[cfg(test)]
@@ -46,17 +41,14 @@ impl OpenRequestState {
         if inner.frontend_ready {
             Some(path)
         } else {
-            inner.pending = Some(path);
+            inner.pending.push(path);
             None
         }
     }
 }
 
 pub fn is_supported_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .map(str::to_ascii_lowercase)
-        .is_some_and(|extension| matches!(extension.as_str(), "md" | "markdown" | "json"))
+    crate::document::classify_extension(path).is_ok()
 }
 
 pub fn dispatch_or_queue(app: &AppHandle, path: &Path) {
@@ -72,7 +64,7 @@ pub fn dispatch_or_queue(app: &AppHandle, path: &Path) {
 }
 
 #[tauri::command]
-pub fn take_pending_open(state: tauri::State<'_, OpenRequestState>) -> Option<String> {
+pub fn take_pending_open(state: tauri::State<'_, OpenRequestState>) -> Vec<String> {
     state.mark_ready_and_take()
 }
 
@@ -81,13 +73,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keeps_only_the_latest_startup_request() {
+    fn keeps_all_startup_requests_in_order() {
         let state = OpenRequestState::default();
-        state.queue("/tmp/first.md".into());
-        state.queue("/tmp/latest.json".into());
+        assert_eq!(state.deliver_or_queue("/tmp/first.md".into()), None);
+        assert_eq!(state.deliver_or_queue("/tmp/latest.json".into()), None);
 
-        assert_eq!(state.mark_ready_and_take(), Some("/tmp/latest.json".into()));
-        assert_eq!(state.mark_ready_and_take(), None);
+        assert_eq!(
+            state.mark_ready_and_take(),
+            vec!["/tmp/first.md".to_string(), "/tmp/latest.json".to_string()]
+        );
+        assert!(state.mark_ready_and_take().is_empty());
     }
 
     #[test]
@@ -101,5 +96,26 @@ mod tests {
             state.deliver_or_queue("/tmp/later.md".into()),
             Some("/tmp/later.md".into())
         );
+    }
+
+    #[test]
+    fn accepts_every_registered_document_family() {
+        for path in [
+            "README.md",
+            "data.json",
+            "notes.txt",
+            "config.yaml",
+            "config.yml",
+            "config.toml",
+            "pixel.png",
+            "photo.jpeg",
+            "vector.svg",
+        ] {
+            assert!(
+                is_supported_path(Path::new(path)),
+                "{path} should be supported"
+            );
+        }
+        assert!(!is_supported_path(Path::new("program.exe")));
     }
 }

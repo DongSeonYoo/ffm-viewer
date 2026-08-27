@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createJsonCodeView } from './json-tree';
+import { createJsonCodeView, createTextCodeView } from './json-tree';
 import { formatJsonDocument } from '../lib/json-document';
 
 const diagnosticsEnabled = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
@@ -122,6 +122,25 @@ describe('createJsonCodeView', () => {
 
     more?.click();
     expect(viewer.querySelectorAll('[data-action="jump"]')).toHaveLength(140);
+    viewer.destroy();
+  });
+});
+
+describe('createTextCodeView', () => {
+  beforeEach(() => {
+    if (diagnosticsEnabled) vi.stubGlobal('ResizeObserver', TestResizeObserver);
+  });
+
+  afterAll(() => vi.unstubAllGlobals());
+
+  it('shows arbitrary text as searchable read-only code without a JSON outline', () => {
+    const viewer = createTextCodeView('server:\n  port: 4000');
+    document.body.append(viewer);
+
+    expect(viewer.querySelector('.cm-content')?.textContent).toContain('port: 4000');
+    expect(viewer.querySelector('.cm-lineNumbers')).not.toBeNull();
+    expect(viewer.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
+    expect(viewer.querySelector('.json-outline')).toBeNull();
     viewer.destroy();
   });
 });

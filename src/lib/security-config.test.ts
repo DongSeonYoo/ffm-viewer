@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import html from '../../index.html?raw';
+import capabilities from '../../src-tauri/capabilities/default.json';
 import tauriConfig from '../../src-tauri/tauri.conf.json';
 
 describe('desktop CSP', () => {
@@ -15,5 +16,25 @@ describe('desktop CSP', () => {
       'dangerousDisableAssetCspModification',
       true,
     );
+  });
+
+  it('registers every supported document and image extension as a viewer', () => {
+    const extensions = tauriConfig.bundle.fileAssociations
+      .flatMap((association) => association.ext);
+
+    expect(new Set(extensions)).toEqual(new Set([
+      'md', 'markdown', 'json', 'txt', 'yaml', 'yml', 'toml',
+      'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+    ]));
+  });
+
+  it('grants only the native dialog permissions Scratch needs', () => {
+    expect(capabilities.permissions).toEqual([
+      'core:default',
+      'dialog:allow-open',
+      'dialog:allow-save',
+      'dialog:allow-message',
+      'opener:allow-open-url',
+    ]);
   });
 });

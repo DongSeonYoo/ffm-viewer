@@ -2,7 +2,7 @@
 
 **Files, fast.**
 
-FFM Viewer is a lightweight Tauri desktop app that renders Markdown as a clean reading surface and JSON as a collapsible tree. Files stay on your machine.
+FFM Viewer is a lightweight Tauri desktop app for Markdown, JSON, plain text, YAML, TOML, and common image files. Files stay on your machine.
 
 ## Install on macOS
 
@@ -48,7 +48,8 @@ Build a release bundle:
 pnpm build
 ```
 
-Build the latest local test image. This replaces `FFM_dev.dmg` in the project root:
+Build the latest local test image. This replaces `FFM_dev.dmg`, installs
+`/Applications/FFM_dev.app`, registers it with macOS, and launches it:
 
 ```bash
 pnpm build:dev-dmg
@@ -56,11 +57,12 @@ pnpm build:dev-dmg
 
 ## Publish a release
 
-Set the app version in `src-tauri/tauri.conf.json`, then push a matching tag:
+Set the same version in `package.json`, `src-tauri/tauri.conf.json`, and
+`src-tauri/Cargo.toml`, then push a matching tag:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The release workflow tests the project, builds the Apple Silicon app on GitHub's macOS runner, verifies its ad-hoc signature, and publishes the ZIP plus its SHA-256 checksum. `install.sh` always installs the latest published release.

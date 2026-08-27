@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 const MAX_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
@@ -12,6 +13,10 @@ const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 pub enum DocumentKind {
     Markdown,
     Json,
+    Text,
+    Yaml,
+    Toml,
+    Image,
 }
 
 #[derive(Debug, Serialize)]
@@ -23,7 +28,7 @@ pub struct DocumentPayload {
     pub content: String,
 }
 
-fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
+pub fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -32,7 +37,11 @@ fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
     match extension.as_deref() {
         Some("md" | "markdown") => Ok(DocumentKind::Markdown),
         Some("json") => Ok(DocumentKind::Json),
-        _ => Err("Only Markdown and JSON documents are supported.".into()),
+        Some("txt") => Ok(DocumentKind::Text),
+        Some("yaml" | "yml") => Ok(DocumentKind::Yaml),
+        Some("toml") => Ok(DocumentKind::Toml),
+        Some(_) if image_mime(path, true).is_ok() => Ok(DocumentKind::Image),
+        _ => Err("This file type is not supported.".into()),
     }
 }
 
@@ -44,19 +53,36 @@ pub fn read_document_from_path(path: &Path) -> Result<DocumentPayload, String> {
         .metadata()
         .map_err(|_| "The selected document could not be inspected.".to_string())?;
     if !metadata.is_file() {
-        return Err("Select a Markdown or JSON file, not a directory.".into());
+        return Err("Select a supported file, not a directory.".into());
     }
-    if metadata.len() > MAX_DOCUMENT_BYTES {
-        return Err("This document is larger than the 50 MB safety limit.".into());
+    let kind = classify_extension(&canonical)?;
+    let (size_limit, size_error) = if kind == DocumentKind::Image {
+        (
+            MAX_IMAGE_BYTES,
+            "This image is larger than the 10 MB safety limit.",
+        )
+    } else {
+        (
+            MAX_DOCUMENT_BYTES,
+            "This document is larger than the 50 MB safety limit.",
+        )
+    };
+    if metadata.len() > size_limit {
+        return Err(size_error.into());
     }
 
-    let kind = classify_extension(&canonical)?;
     let bytes =
         fs::read(&canonical).map_err(|_| "The selected document could not be read.".to_string())?;
-    let content = String::from_utf8(bytes)
-        .map_err(|_| "This document is not valid UTF-8 text.".to_string())?
-        .trim_start_matches('\u{feff}')
-        .to_string();
+    let content = if kind == DocumentKind::Image {
+        // ponytail: data URLs keep image delivery CSP-safe; use the asset protocol only if large-image profiling proves copies costly.
+        let mime = image_mime(&canonical, true)?;
+        format!("data:{mime};base64,{}", BASE64.encode(bytes))
+    } else {
+        String::from_utf8(bytes)
+            .map_err(|_| "This document is not valid UTF-8 text.".to_string())?
+            .trim_start_matches('\u{feff}')
+            .to_string()
+    };
     let name = canonical
         .file_name()
         .and_then(|value| value.to_str())
@@ -75,7 +101,43 @@ pub fn read_document(path: String) -> Result<DocumentPayload, String> {
     read_document_from_path(Path::new(&path))
 }
 
-fn image_mime(path: &Path) -> Result<&'static str, String> {
+fn write_document_to_path(path: &Path, content: &str) -> Result<(), String> {
+    if content.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err("This document is larger than the 50 MB safety limit.".into());
+    }
+    if classify_extension(path)? == DocumentKind::Image {
+        return Err("Scratch content can only be saved as a text document.".into());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "The save folder is unavailable.".to_string())?
+        .canonicalize()
+        .map_err(|_| "The save folder is unavailable.".to_string())?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| "Choose a valid file name.".to_string())?;
+    let target = parent.join(name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|_| {
+            "Choose a new file name. FFM will not overwrite an existing file.".to_string()
+        })?;
+    if file.write_all(content.as_bytes()).is_err() || file.sync_all().is_err() {
+        drop(file);
+        let _ = fs::remove_file(&target);
+        return Err("The document could not be saved.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn write_document(path: String, content: String) -> Result<(), String> {
+    write_document_to_path(Path::new(&path), &content)
+}
+
+fn image_mime(path: &Path, allow_svg: bool) -> Result<&'static str, String> {
     match path
         .extension()
         .and_then(|value| value.to_str())
@@ -87,6 +149,7 @@ fn image_mime(path: &Path) -> Result<&'static str, String> {
         Some("gif") => Ok("image/gif"),
         Some("webp") => Ok("image/webp"),
         Some("avif") => Ok("image/avif"),
+        Some("svg") if allow_svg => Ok("image/svg+xml"),
         _ => Err("This local image format is not supported.".into()),
     }
 }
@@ -116,7 +179,7 @@ fn read_local_image_data_url(document: &Path, source: &str) -> Result<String, St
     if !candidate.starts_with(&base) {
         return Err("Local images must stay inside the document folder.".into());
     }
-    let mime = image_mime(&candidate)?;
+    let mime = image_mime(&candidate, false)?;
     let metadata = candidate
         .metadata()
         .map_err(|_| "The local image could not be inspected.".to_string())?;
@@ -159,6 +222,17 @@ mod tests {
         path
     }
 
+    fn temp_sparse_file(name: &str, length: u64) -> PathBuf {
+        let path = temp_file(name, b"");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("fixture should open")
+            .set_len(length)
+            .expect("fixture length should be set");
+        path
+    }
+
     #[test]
     fn reads_supported_markdown_documents() {
         let path = temp_file("README.md", b"# Hello");
@@ -178,11 +252,104 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_extensions() {
-        let path = temp_file("notes.txt", b"hello");
-        let error = read_document_from_path(&path).expect_err("text files are out of scope");
+    fn reads_plain_text_and_config_documents() {
+        for (name, kind) in [
+            ("notes.txt", DocumentKind::Text),
+            ("config.yaml", DocumentKind::Yaml),
+            ("config.YML", DocumentKind::Yaml),
+            ("config.toml", DocumentKind::Toml),
+        ] {
+            let path = temp_file(name, b"key = value");
+            let payload = read_document_from_path(&path).expect("text document should load");
+            assert_eq!(payload.kind, kind);
+            assert_eq!(payload.content, "key = value");
+        }
+    }
 
-        assert!(error.contains("Markdown and JSON"));
+    #[test]
+    fn reads_image_documents_as_inert_data_urls() {
+        for (name, mime, bytes) in [
+            ("pixel.png", "image/png", &b"png"[..]),
+            ("photo.jpeg", "image/jpeg", &b"jpeg"[..]),
+            (
+                "vector.svg",
+                "image/svg+xml",
+                &b"<svg><script>alert(1)</script></svg>"[..],
+            ),
+        ] {
+            let path = temp_file(name, bytes);
+            let payload = read_document_from_path(&path).expect("image document should load");
+            assert_eq!(payload.kind, DocumentKind::Image);
+            assert!(payload.content.starts_with(&format!("data:{mime};base64,")));
+            assert!(!payload.content.contains("<script"));
+        }
+    }
+
+    #[test]
+    fn enforces_the_image_document_size_limit() {
+        let allowed = temp_sparse_file("allowed.png", MAX_IMAGE_BYTES);
+        let payload = read_document_from_path(&allowed).expect("10 MB image should load");
+        assert_eq!(payload.kind, DocumentKind::Image);
+
+        let oversized = temp_sparse_file("oversized.png", MAX_IMAGE_BYTES + 1);
+        let error = read_document_from_path(&oversized).expect_err("oversized image should fail");
+        assert_eq!(error, "This image is larger than the 10 MB safety limit.");
+    }
+
+    #[test]
+    fn rejects_directories_with_a_supported_file_message() {
+        let seed = temp_file("seed.txt", b"");
+        let directory = seed.parent().expect("temp directory");
+
+        let error = read_document_from_path(directory).expect_err("directories should fail");
+        assert_eq!(error, "Select a supported file, not a directory.");
+    }
+
+    #[test]
+    fn rejects_unsupported_extensions() {
+        let path = temp_file("notes.exe", b"hello");
+        let error = read_document_from_path(&path).expect_err("executables are out of scope");
+
+        assert!(error.contains("supported"));
+    }
+
+    #[test]
+    fn writes_scratch_text_to_a_supported_path() {
+        let seed = temp_file("seed.txt", b"");
+        let path = seed.parent().expect("temp directory").join("saved.md");
+
+        write_document_to_path(&path, "# Saved").expect("scratch should save");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("saved contents"),
+            "# Saved"
+        );
+    }
+
+    #[test]
+    fn refuses_to_overwrite_an_image_from_scratch() {
+        let seed = temp_file("seed.txt", b"");
+        let path = seed.parent().expect("temp directory").join("image.png");
+
+        let error = write_document_to_path(&path, "not an image")
+            .expect_err("scratch must not write image extensions");
+
+        assert!(error.contains("text"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn refuses_to_overwrite_an_existing_text_file() {
+        let path = temp_file("existing.md", b"original");
+
+        let error = write_document_to_path(&path, "replacement")
+            .expect_err("existing user files must stay untouched");
+
+        assert!(error.contains("not overwrite"));
+        assert_eq!(
+            fs::read_to_string(path).expect("original remains"),
+            "original"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { createApp } from './app';
+import { createApp } from './app-shell';
 import { createTauriBridge } from './lib/tauri-bridge';
 import './styles.css';
 
@@ -9,10 +9,16 @@ async function bootstrap(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
   if (
     import.meta.env.DEV &&
-    (fixture === 'markdown' || fixture === 'json' || fixture === 'json-large')
+    ['markdown', 'json', 'json-large', 'text', 'yaml', 'toml', 'image', 'multi']
+      .includes(fixture ?? '')
   ) {
     const { createBrowserPreviewBridge } = await import('./lib/browser-preview-bridge');
-    await createApp(root!, createBrowserPreviewBridge(fixture));
+    await createApp(
+      root!,
+      createBrowserPreviewBridge(
+        fixture as Parameters<typeof createBrowserPreviewBridge>[0],
+      ),
+    );
     return;
   }
 
