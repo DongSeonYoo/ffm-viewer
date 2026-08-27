@@ -20,13 +20,6 @@ struct PathEvent {
 }
 
 impl OpenRequestState {
-    #[cfg(test)]
-    pub fn queue(&self, path: String) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.pending.push(path);
-        }
-    }
-
     pub fn mark_ready_and_take(&self) -> Vec<String> {
         let Ok(mut inner) = self.inner.lock() else {
             return Vec::new();
@@ -82,8 +75,8 @@ mod tests {
     #[test]
     fn keeps_all_startup_requests_in_order() {
         let state = OpenRequestState::default();
-        state.queue("/tmp/first.md".into());
-        state.queue("/tmp/latest.json".into());
+        assert_eq!(state.deliver_or_queue("/tmp/first.md".into()), None);
+        assert_eq!(state.deliver_or_queue("/tmp/latest.json".into()), None);
 
         assert_eq!(
             state.mark_ready_and_take(),

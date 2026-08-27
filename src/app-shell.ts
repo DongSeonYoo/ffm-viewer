@@ -17,6 +17,16 @@ const IMAGE_CONCURRENCY = 3;
 const MAX_IMAGE_DATA_CHARS = 24 * 1024 * 1024;
 const MAX_HISTORY = 100;
 const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
+type ScratchViewKind = Exclude<DocumentKind, 'json' | 'image'>;
+const SCRATCH_VIEW_ACTIONS: ReadonlyArray<{
+  readonly kind: ScratchViewKind;
+  readonly label: string;
+}> = [
+  { kind: 'markdown', label: 'View as Markdown' },
+  { kind: 'text', label: 'View as Plain Text' },
+  { kind: 'yaml', label: 'View as YAML' },
+  { kind: 'toml', label: 'View as TOML' },
+];
 
 interface OpenTab {
   readonly id: string;
@@ -319,7 +329,6 @@ export async function createApp(
 
       const tabElement = document.createElement('div');
       tabElement.className = `document-tab${selected ? ' is-active' : ''}`;
-      tabElement.dataset.tabId = tab.id;
       tabElement.setAttribute('role', 'tab');
       tabElement.setAttribute('aria-selected', String(selected));
       tabElement.tabIndex = selected ? 0 : -1;
@@ -547,7 +556,7 @@ export async function createApp(
     renderActive();
   }
 
-  function applyScratchKind(kind: 'markdown' | 'text' | 'yaml' | 'toml'): void {
+  function applyScratchKind(kind: ScratchViewKind): void {
     const tab = activeTab();
     if (!tab || tab.source !== 'scratch') return;
     tab.payload = { ...tab.payload, kind };
@@ -662,8 +671,11 @@ export async function createApp(
     historyIndex = Math.max(-1, Math.min(historyIndex, history.length - 1));
     if (wasActive) {
       const replacement = tabs[Math.min(index, tabs.length - 1)];
-      activeId = replacement?.id;
-      if (activeId) recordHistory(activeId);
+      activeId = undefined;
+      if (replacement) {
+        activateTab(replacement.id);
+        return;
+      }
     }
     renderChrome();
     if (wasActive) renderActive();
@@ -811,13 +823,9 @@ export async function createApp(
       }
       const scratch = activeTab();
       if (query && scratch?.source === 'scratch') {
-        const actions: Array<{ kind: 'markdown' | 'text' | 'yaml' | 'toml'; label: string }> = [
-          { kind: 'markdown', label: 'View as Markdown' },
-          { kind: 'text', label: 'View as Plain Text' },
-          { kind: 'yaml', label: 'View as YAML' },
-          { kind: 'toml', label: 'View as TOML' },
-        ];
-        for (const action of actions.filter(({ label }) => label.toLocaleLowerCase().includes(query))) {
+        for (const action of SCRATCH_VIEW_ACTIONS.filter(
+          ({ label }) => label.toLocaleLowerCase().includes(query),
+        )) {
           const item = document.createElement('button');
           item.type = 'button';
           item.className = `quick-switcher-item${list.children.length === 0 ? ' is-active' : ''}`;
@@ -844,14 +852,11 @@ export async function createApp(
           '[data-quick-switch-id], [data-quick-action-kind]',
         );
         const id = first?.dataset.quickSwitchId;
-        const kind = first?.dataset.quickActionKind as
-          | 'markdown'
-          | 'text'
-          | 'yaml'
-          | 'toml'
-          | undefined;
+        const action = SCRATCH_VIEW_ACTIONS.find(
+          ({ kind }) => kind === first?.dataset.quickActionKind,
+        );
         if (id) activateTab(id);
-        else if (kind) applyScratchKind(kind);
+        else if (action) applyScratchKind(action.kind);
         closeQuickSwitcher();
       }
     });

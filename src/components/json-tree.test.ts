@@ -127,6 +127,12 @@ describe('createJsonCodeView', () => {
 });
 
 describe('createTextCodeView', () => {
+  beforeEach(() => {
+    if (diagnosticsEnabled) vi.stubGlobal('ResizeObserver', TestResizeObserver);
+  });
+
+  afterAll(() => vi.unstubAllGlobals());
+
   it('shows arbitrary text as searchable read-only code without a JSON outline', () => {
     const viewer = createTextCodeView('server:\n  port: 4000');
     document.body.append(viewer);

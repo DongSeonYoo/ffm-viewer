@@ -516,8 +516,7 @@ a:focus-visible {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.text-code-view,
-.text-code-editor {
+.text-code-view {
   height: 100%;
 }
 

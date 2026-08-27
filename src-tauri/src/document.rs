@@ -40,9 +40,7 @@ pub fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
         Some("txt") => Ok(DocumentKind::Text),
         Some("yaml" | "yml") => Ok(DocumentKind::Yaml),
         Some("toml") => Ok(DocumentKind::Toml),
-        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "svg") => {
-            Ok(DocumentKind::Image)
-        }
+        Some(_) if image_mime(path, true).is_ok() => Ok(DocumentKind::Image),
         _ => Err("This file type is not supported.".into()),
     }
 }

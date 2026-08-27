@@ -48,8 +48,6 @@ export interface CodeViewElement extends HTMLElement {
   destroy(): void;
 }
 
-export type JsonCodeViewElement = CodeViewElement;
-
 const jsonHighlightStyle = HighlightStyle.define([
   { tag: tags.propertyName, color: 'var(--json-key)' },
   { tag: tags.string, color: 'var(--json-string)' },
@@ -405,8 +403,8 @@ function commonEditorExtensions(
   ];
 }
 
-export function createJsonCodeView(source: string): JsonCodeViewElement {
-  const wrapper = document.createElement('section') as JsonCodeViewElement;
+export function createJsonCodeView(source: string): CodeViewElement {
+  const wrapper = document.createElement('section') as CodeViewElement;
   wrapper.className = 'json-code-view';
 
   const code = document.createElement('div');
