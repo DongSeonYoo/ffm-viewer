@@ -9,6 +9,7 @@
     "build": "pnpm build:web && tauri build",
     "build:dev-dmg": "sh scripts/build-dev-dmg.sh",
     "test": "vitest run",
+    "test:diagnostics": "VITE_FFM_DIAGNOSTICS=1 vitest run src/components/json-tree.test.ts",
     "test:install": "sh tests/install.sh",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
