@@ -270,18 +270,14 @@ function isExpandable(node: JsonSyntaxNode): boolean {
   return node.name === 'Object' || node.name === 'Array';
 }
 
-function createOutline(
+function populateOutline(
+  outline: HTMLElement,
   view: EditorView,
   source: string,
   syntaxRoot: JsonSyntaxNode,
-): HTMLElement {
-  const outline = document.createElement('nav');
-  outline.className = 'json-outline';
-  outline.setAttribute('role', 'tree');
-  outline.setAttribute('aria-label', 'JSON keys');
-
+): void {
   const root = syntaxRoot.firstChild;
-  if (!root || !isExpandable(root)) return outline;
+  if (!root || !isExpandable(root)) return;
   let activeNode: HTMLElement | undefined;
   let activeJump: HTMLButtonElement | undefined;
 
@@ -369,7 +365,6 @@ function createOutline(
   };
 
   renderPage(root, outline);
-  return outline;
 }
 
 function commonEditorExtensions(
@@ -425,9 +420,22 @@ export function createJsonCodeView(source: string): CodeViewElement {
   const view = new EditorView({ state, parent: code });
   let destroyDiagnostics: () => void = () => undefined;
 
-  // ponytail: full parse gives the outline stable offsets; revisit only if profiling says it matters.
-  const outlineTree = jsonLanguage.parser.parse(source);
-  wrapper.append(createOutline(view, source, outlineTree.topNode), code);
+  const outline = document.createElement('nav');
+  outline.className = 'json-outline';
+  outline.setAttribute('role', 'tree');
+  outline.setAttribute('aria-label', 'JSON keys');
+  wrapper.append(outline, code);
+
+  // ponytail: keep stable full-parse offsets, but let the code view paint first.
+  let outlineTimer: number | undefined;
+  let outlineFrame: number | undefined = window.requestAnimationFrame(() => {
+    outlineFrame = undefined;
+    outlineTimer = window.setTimeout(() => {
+      outlineTimer = undefined;
+      const outlineTree = jsonLanguage.parser.parse(source);
+      populateOutline(outline, view, source, outlineTree.topNode);
+    });
+  });
   if (DIAGNOSTICS_ENABLED) {
     const diagnostics = attachDiagnostics(wrapper, code, view, source);
     recordDiagnostics = diagnostics.record;
@@ -435,6 +443,8 @@ export function createJsonCodeView(source: string): CodeViewElement {
     recordDiagnostics('attached-panel');
   }
   wrapper.destroy = () => {
+    if (outlineFrame !== undefined) window.cancelAnimationFrame(outlineFrame);
+    if (outlineTimer !== undefined) window.clearTimeout(outlineTimer);
     destroyDiagnostics();
     view.destroy();
   };

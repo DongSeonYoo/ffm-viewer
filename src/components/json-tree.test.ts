@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { jsonLanguage } from '@codemirror/lang-json';
 import { createJsonCodeView, createTextCodeView } from './json-tree';
 import { formatJsonDocument } from '../lib/json-document';
 
@@ -40,7 +41,35 @@ describe('createJsonCodeView', () => {
     nonceSource.remove();
   });
 
-  it('shows formatted read-only code and top-level outline keys', () => {
+  it('defers outline work until after the code view is available', () => {
+    const parse = vi.spyOn(jsonLanguage.parser, 'parse');
+    const viewer = createJsonCodeView(formatJsonDocument('{"ready":true}'));
+    document.body.append(viewer);
+
+    expect(viewer.querySelector('.cm-content')).not.toBeNull();
+    expect(viewer.querySelectorAll('[data-action="jump"]')).toHaveLength(0);
+    expect(parse).not.toHaveBeenCalled();
+    viewer.destroy();
+    parse.mockRestore();
+  });
+
+  it('cancels outline parsing when the view closes after its paint frame', async () => {
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => frames.push(callback));
+    const parse = vi.spyOn(jsonLanguage.parser, 'parse');
+    const viewer = createJsonCodeView(formatJsonDocument('{"ready":true}'));
+
+    frames.at(-1)?.(0);
+    viewer.destroy();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(parse).not.toHaveBeenCalled();
+    requestFrame.mockRestore();
+    parse.mockRestore();
+  });
+
+  it('shows formatted read-only code and top-level outline keys', async () => {
     const source = formatJsonDocument(
       '{"service":{"name":"api"},"ready":true}',
     );
@@ -48,7 +77,7 @@ describe('createJsonCodeView', () => {
     document.body.append(viewer);
 
     const outline = viewer.querySelector('.json-outline');
-    expect(outline?.textContent).toContain('service');
+    await vi.waitFor(() => expect(outline?.textContent).toContain('service'));
     expect(outline?.textContent).toContain('ready');
     expect(outline?.textContent).not.toContain('name');
     expect(viewer.querySelector('.cm-lineNumbers')).not.toBeNull();
@@ -56,16 +85,21 @@ describe('createJsonCodeView', () => {
     viewer.destroy();
   });
 
-  it('expands nested keys and jumps to the selected code line', () => {
+  it('expands nested keys and jumps to the selected code line', async () => {
     const source = formatJsonDocument(
       '{"service":{"name":"api","port":4000}}',
     );
     const viewer = createJsonCodeView(source);
     document.body.append(viewer);
 
-    viewer
-      .querySelector<HTMLButtonElement>('[data-outline-label="service"] [data-action="toggle"]')
-      ?.click();
+    const toggle = await vi.waitFor(() => {
+      const button = viewer.querySelector<HTMLButtonElement>(
+        '[data-outline-label="service"] [data-action="toggle"]',
+      );
+      expect(button).not.toBeNull();
+      return button;
+    });
+    toggle?.click();
     const name = viewer.querySelector<HTMLButtonElement>(
       '[data-action="jump"][data-outline-label="name"]',
     );
@@ -109,14 +143,16 @@ describe('createJsonCodeView', () => {
     cancelAnimationFrame.mockRestore();
   });
 
-  it('pages large arrays instead of filling the outline DOM', () => {
+  it('pages large arrays instead of filling the outline DOM', async () => {
     const source = formatJsonDocument(
       JSON.stringify(Array.from({ length: 140 }, (_, index) => ({ index }))),
     );
     const viewer = createJsonCodeView(source);
     document.body.append(viewer);
 
-    expect(viewer.querySelectorAll('[data-action="jump"]')).toHaveLength(100);
+    await vi.waitFor(() => {
+      expect(viewer.querySelectorAll('[data-action="jump"]')).toHaveLength(100);
+    });
     const more = viewer.querySelector<HTMLButtonElement>('[data-action="more"]');
     expect(more?.textContent).toContain('more');
 
