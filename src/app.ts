@@ -4,26 +4,71 @@ import { parseJsonDocument } from './lib/json-document';
 import { renderMarkdown } from './lib/markdown';
 
 let activeKeydownListener: ((event: KeyboardEvent) => void) | undefined;
+const IMAGE_CONCURRENCY = 3;
+const MAX_IMAGE_DATA_CHARS = 24 * 1024 * 1024;
+
+function markImageUnavailable(image: HTMLImageElement): void {
+  image.removeAttribute('src');
+  image.classList.add('is-unavailable');
+}
 
 async function hydrateLocalImages(
   article: HTMLElement,
   payload: DocumentPayload,
   bridge: DesktopBridge,
+  isCurrent: () => boolean,
 ): Promise<void> {
   const images = Array.from(article.querySelectorAll<HTMLImageElement>('img[src]'));
-  await Promise.all(
-    images.map(async (image) => {
-      const source = image.getAttribute('src');
-      if (!source || /^(?:https?:|data:)/i.test(source)) return;
+  const groups = new Map<string, HTMLImageElement[]>();
+
+  for (const image of images) {
+    const source = image.getAttribute('src');
+    if (!source) continue;
+    if (/^https?:/i.test(source)) {
+      markImageUnavailable(image);
+      continue;
+    }
+    if (/^data:/i.test(source)) continue;
+    const group = groups.get(source) ?? [];
+    group.push(image);
+    groups.set(source, group);
+  }
+
+  const pending = Array.from(groups.entries());
+  let cursor = 0;
+  let aggregateChars = 0;
+  let budgetExhausted = false;
+
+  const worker = async () => {
+    while (isCurrent() && !budgetExhausted) {
+      const task = pending[cursor++];
+      if (!task) return;
+      const [source, matchingImages] = task;
       try {
         const resolved = await bridge.resolveLocalImage(payload.path, source);
-        if (resolved) image.src = resolved;
-        else image.classList.add('is-unavailable');
+        if (!isCurrent()) return;
+        if (!resolved || aggregateChars + resolved.length > MAX_IMAGE_DATA_CHARS) {
+          budgetExhausted = aggregateChars + (resolved?.length ?? 0) > MAX_IMAGE_DATA_CHARS;
+          matchingImages.forEach(markImageUnavailable);
+          continue;
+        }
+        aggregateChars += resolved.length;
+        matchingImages.forEach((image) => {
+          image.src = resolved;
+        });
       } catch {
-        image.classList.add('is-unavailable');
+        matchingImages.forEach(markImageUnavailable);
       }
-    }),
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(IMAGE_CONCURRENCY, pending.length) }, worker),
   );
+
+  if (budgetExhausted) {
+    pending.slice(cursor).flatMap(([, group]) => group).forEach(markImageUnavailable);
+  }
 }
 
 function createOpenButton(
@@ -81,8 +126,10 @@ export async function createApp(
   root: HTMLElement,
   bridge: DesktopBridge,
 ): Promise<void> {
-  let currentPath: string | undefined;
+  let watchedPath: string | undefined;
+  let watchWarning: string | undefined;
   let loadSequence = 0;
+  let renderSequence = 0;
 
   const chooseDocument = async () => {
     const path = await bridge.chooseDocument();
@@ -115,8 +162,21 @@ export async function createApp(
     root.append(state);
   };
 
+  const renderWatchWarning = () => {
+    document.querySelector('.watch-warning')?.remove();
+    if (!watchWarning) return;
+    const shell = root.querySelector('.app-shell');
+    const header = shell?.querySelector('.document-header');
+    if (!shell || !header) return;
+    const warning = document.createElement('div');
+    warning.className = 'watch-warning';
+    warning.textContent = watchWarning;
+    header.insertAdjacentElement('afterend', warning);
+  };
+
   const renderDocument = (payload: DocumentPayload) => {
     const previousScroll = window.scrollY;
+    const renderId = ++renderSequence;
     const shell = document.createElement('div');
     shell.className = `app-shell is-${payload.kind}`;
     shell.append(createHeader(payload, chooseDocument));
@@ -127,7 +187,12 @@ export async function createApp(
       const article = document.createElement('article');
       article.className = 'markdown-document';
       article.innerHTML = renderMarkdown(payload.content);
-      void hydrateLocalImages(article, payload, bridge);
+      void hydrateLocalImages(
+        article,
+        payload,
+        bridge,
+        () => renderId === renderSequence,
+      );
       article.addEventListener('click', (event) => {
         const link = (event.target as Element).closest<HTMLAnchorElement>('a[href]');
         if (!link) return;
@@ -150,6 +215,7 @@ export async function createApp(
 
     shell.append(main);
     root.replaceChildren(shell);
+    renderWatchWarning();
     document.title = `${payload.name} — Dev Preview`;
     if (previousScroll > 0) {
       requestAnimationFrame(() => window.scrollTo({ top: previousScroll }));
@@ -159,18 +225,32 @@ export async function createApp(
   async function loadDocument(path: string): Promise<void> {
     const sequence = ++loadSequence;
     try {
+      if (watchedPath !== path) {
+        try {
+          await bridge.watchDocument(
+            path,
+            (changedPath) => {
+              if (changedPath === watchedPath) void loadDocument(changedPath);
+            },
+            (failedPath) => {
+              if (failedPath !== watchedPath) return;
+              watchedPath = undefined;
+              watchWarning = 'Live refresh paused. Reopen the document to retry.';
+              renderWatchWarning();
+            },
+          );
+          watchedPath = path;
+          watchWarning = undefined;
+        } catch {
+          watchedPath = undefined;
+          watchWarning = 'Live refresh paused. Reopen the document to retry.';
+        }
+      }
       const payload = await bridge.readDocument(path);
       if (sequence !== loadSequence) return;
-      const shouldStartWatch = currentPath !== payload.path;
-      currentPath = payload.path;
       const renderStarted = performance.now();
       renderDocument(payload);
       root.dataset.renderMs = (performance.now() - renderStarted).toFixed(2);
-      if (shouldStartWatch) {
-        await bridge.watchDocument(payload.path, (changedPath) => {
-          if (changedPath === currentPath) void loadDocument(changedPath);
-        });
-      }
     } catch (error) {
       if (sequence !== loadSequence) return;
       renderError(error instanceof Error ? error.message : 'File could not be opened.');

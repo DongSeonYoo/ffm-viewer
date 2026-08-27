@@ -3,6 +3,7 @@ import {
   type JsonNode,
   type JsonPrimitive,
 } from '../lib/json-document';
+import { isLosslessNumber } from 'lossless-json';
 
 const PAGE_SIZE = 100;
 
@@ -21,7 +22,8 @@ function createButton(action: string, label: string): HTMLButtonElement {
 function renderPrimitive(value: JsonPrimitive): HTMLSpanElement {
   const element = document.createElement('span');
   const kind = value === null ? 'null' : typeof value;
-  element.className = `json-value json-${kind}`;
+  const semanticKind = isLosslessNumber(value) ? 'number' : kind;
+  element.className = `json-value json-${semanticKind}`;
   element.textContent = typeof value === 'string' ? JSON.stringify(value) : String(value);
   return element;
 }
@@ -154,4 +156,3 @@ export function createJsonTree(root: JsonNode): HTMLElement {
   tree.append(renderNode(root, true));
   return tree;
 }
-

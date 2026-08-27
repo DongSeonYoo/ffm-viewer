@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   getJsonChildren,
   parseJsonDocument,
@@ -55,5 +55,25 @@ describe('JSON document model', () => {
     const root = parseJsonDocument(source);
     expect(root.kind).toBe('array');
     expect(root.childCount).toBe(1);
+  });
+
+  it('preserves numeric lexemes outside the JavaScript safe range', () => {
+    const root = parseJsonDocument('[9223372036854775807,2.3e+500]');
+    const values = getJsonChildren(root, 0, 10).items;
+
+    expect(String(values[0]?.value)).toBe('9223372036854775807');
+    expect(String(values[1]?.value)).toBe('2.3e+500');
+  });
+
+  it('reuses object keys instead of enumerating the whole object for every page', () => {
+    const root = parseJsonDocument(
+      JSON.stringify(Object.fromEntries(Array.from({ length: 250 }, (_, i) => [`key${i}`, i]))),
+    );
+    const entries = vi.spyOn(Object, 'entries');
+
+    getJsonChildren(root, 0, 100);
+    getJsonChildren(root, 100, 100);
+    expect(entries).not.toHaveBeenCalled();
+    entries.mockRestore();
   });
 });

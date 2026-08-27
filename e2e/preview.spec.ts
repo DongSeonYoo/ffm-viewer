@@ -34,7 +34,7 @@ test('the reading surface follows dark appearance without changing its hierarchy
     return { background: style.backgroundColor, text: style.color };
   });
   expect(colors.background).not.toBe('rgb(255, 255, 255)');
-  expect(colors.background).not.toBe(colors.text);
+  expect(contrastRatio(colors.background, colors.text)).toBeGreaterThanOrEqual(4.5);
 });
 
 test('large JSON reaches first paint without materializing the full tree', async ({ page }) => {
@@ -42,6 +42,26 @@ test('large JSON reaches first paint without materializing the full tree', async
 
   await expect(page.locator('.json-tree')).toBeVisible();
   await expect(page.locator('[data-json-node]')).toHaveCount(101);
-  const renderMs = Number(await page.locator('#app').getAttribute('data-render-ms'));
+  const renderValue = await page.locator('#app').getAttribute('data-render-ms');
+  expect(renderValue).not.toBeNull();
+  const renderMs = Number(renderValue);
+  expect(Number.isFinite(renderMs)).toBe(true);
+  expect(renderMs).toBeGreaterThanOrEqual(0);
   expect(renderMs).toBeLessThan(500);
 });
+
+function contrastRatio(first: string, second: string): number {
+  const luminance = (color: string) => {
+    const channels = color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+    const linear = channels.map((value) => {
+      const normalized = value / 255;
+      return normalized <= 0.03928
+        ? normalized / 12.92
+        : ((normalized + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * (linear[0] ?? 0) + 0.7152 * (linear[1] ?? 0) + 0.0722 * (linear[2] ?? 0);
+  };
+  const a = luminance(first);
+  const b = luminance(second);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}

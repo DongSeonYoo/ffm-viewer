@@ -13,7 +13,11 @@ export type PathHandler = (path: string) => void;
 export interface DesktopBridge {
   chooseDocument(): Promise<string | null>;
   readDocument(path: string): Promise<DocumentPayload>;
-  watchDocument(path: string, onChange: PathHandler): Promise<void>;
+  watchDocument(
+    path: string,
+    onChange: PathHandler,
+    onError: PathHandler,
+  ): Promise<void>;
   takePendingOpen(): Promise<string | null>;
   onOpenRequested(handler: PathHandler): Promise<Dispose>;
   onFileDropped(handler: PathHandler): Promise<Dispose>;

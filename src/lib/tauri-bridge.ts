@@ -21,7 +21,9 @@ function normalizeDispose(unlisten: UnlistenFn): Dispose {
 export function createTauriBridge(): DesktopBridge {
   let currentPath = '';
   let currentChangeHandler: PathHandler | undefined;
+  let currentErrorHandler: PathHandler | undefined;
   let changeListener: Promise<UnlistenFn> | undefined;
+  let errorListener: Promise<UnlistenFn> | undefined;
   let changeTimer: number | undefined;
 
   return {
@@ -43,9 +45,10 @@ export function createTauriBridge(): DesktopBridge {
       return invoke<DocumentPayload>('read_document', { path });
     },
 
-    async watchDocument(path, onChange) {
+    async watchDocument(path, onChange, onError) {
       currentPath = path;
       currentChangeHandler = onChange;
+      currentErrorHandler = onError;
       if (!changeListener) {
         changeListener = listen<PathEvent>('document-changed', ({ payload }) => {
           if (payload.path !== currentPath) return;
@@ -56,7 +59,13 @@ export function createTauriBridge(): DesktopBridge {
           }, 90);
         });
       }
+      if (!errorListener) {
+        errorListener = listen<PathEvent>('document-watch-error', ({ payload }) => {
+          if (payload.path === currentPath) currentErrorHandler?.(payload.path);
+        });
+      }
       await changeListener;
+      await errorListener;
       await invoke('watch_document', { path });
     },
 

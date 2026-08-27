@@ -189,6 +189,18 @@ a:focus-visible {
   color: var(--danger);
 }
 
+.watch-warning {
+  position: sticky;
+  z-index: 9;
+  top: 48px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger), transparent 55%);
+  background: color-mix(in srgb, var(--page), var(--danger) 8%);
+  color: var(--danger);
+  font-size: 0.76rem;
+  padding: 7px 18px;
+  text-align: center;
+}
+
 .document-viewport {
   width: 100%;
 }
@@ -309,6 +321,15 @@ a:focus-visible {
   height: auto;
   margin: 3rem auto;
   border-radius: 5px;
+}
+
+.markdown-document img.is-unavailable {
+  min-width: 12rem;
+  min-height: 3rem;
+  border: 1px dashed var(--line-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 1rem;
 }
 
 .markdown-document code {

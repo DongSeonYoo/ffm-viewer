@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -100,7 +101,10 @@ fn read_local_image_data_url(document: &Path, source: &str) -> Result<String, St
         .canonicalize()
         .map_err(|_| "The Markdown document folder is unavailable.".to_string())?;
     let clean_source = source.split(['?', '#']).next().unwrap_or_default();
-    let source_path = Path::new(clean_source);
+    let decoded_source = percent_decode_str(clean_source)
+        .decode_utf8()
+        .map_err(|_| "The local image path is not valid UTF-8.".to_string())?;
+    let source_path = Path::new(decoded_source.as_ref());
     if source_path.is_absolute() {
         return Err("Local images must stay inside the document folder.".into());
     }
@@ -193,6 +197,33 @@ mod tests {
         let data_url = read_local_image_data_url(&document, "assets/pixel.png")
             .expect("local image should load");
         assert!(data_url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn decodes_percent_encoded_image_names() {
+        let document = temp_file("README.md", b"![diagram](my%20diagram.png)");
+        let image = document.parent().expect("parent").join("my diagram.png");
+        fs::write(&image, [0x89, b'P', b'N', b'G']).expect("image fixture");
+
+        let data_url = read_local_image_data_url(&document, "my%20diagram.png")
+            .expect("encoded local image should load");
+        assert!(data_url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn blocks_percent_encoded_traversal() {
+        let document = temp_file("README.md", b"![secret](%2e%2e/secret.png)");
+        let secret = document
+            .parent()
+            .expect("parent")
+            .parent()
+            .expect("grandparent")
+            .join("secret.png");
+        fs::write(&secret, [0x89, b'P', b'N', b'G']).expect("secret fixture");
+
+        let error = read_local_image_data_url(&document, "%2e%2e/secret.png")
+            .expect_err("encoded traversal should be rejected");
+        assert!(error.contains("document folder"));
     }
 
     #[test]

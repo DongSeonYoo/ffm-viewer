@@ -20,6 +20,9 @@ importers:
       dompurify:
         specifier: ^3.4.7
         version: 3.4.14
+      lossless-json:
+        specifier: ^4.3.1
+        version: 4.3.1
       marked:
         specifier: ^16.0.0
         version: 16.4.2
@@ -792,6 +795,9 @@ packages:
     peerDependenciesMeta:
       canvas:
         optional: true
+
+  lossless-json@4.3.1:
+    resolution: {integrity: sha512-SqD/Bg3ZfltBJ2Z14hJ/BihnvtV553WO4g9/ePtlp4lrnl9jF3AdIJt53A/Wkg/0Li+LMfxaBqgx1MiFZdQlpQ==}
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
@@ -1741,6 +1747,8 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+
+  lossless-json@4.3.1: {}
 
   loupe@3.2.1: {}
 
