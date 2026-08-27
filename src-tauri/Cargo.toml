@@ -1,12 +1,12 @@
 [package]
-name = "dev-preview"
+name = "ffm-viewer"
 version = "0.1.0"
-description = "A quiet local preview for Markdown and JSON documents"
-authors = ["Dev Preview contributors"]
+description = "A fast local viewer for Markdown and JSON documents"
+authors = ["FFM Viewer contributors"]
 edition = "2021"
 
 [lib]
-name = "dev_preview_lib"
+name = "ffm_viewer_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]

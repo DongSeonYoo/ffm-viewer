@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Dev Preview",
+  "productName": "FFM Viewer",
   "version": "0.1.0",
-  "identifier": "io.local.devpreview",
+  "identifier": "io.github.dongseonyoo.ffm-viewer",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Dev Preview",
+        "title": "FFM Viewer",
         "width": 1040,
         "height": 760,
         "minWidth": 540,
@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
-    "shortDescription": "A quiet local preview for Markdown and JSON documents",
+    "shortDescription": "A fast local viewer for Markdown and JSON documents",
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],

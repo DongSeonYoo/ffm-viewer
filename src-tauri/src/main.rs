@@ -1,3 +1,3 @@
 fn main() {
-    dev_preview_lib::run();
+    ffm_viewer_lib::run();
 }

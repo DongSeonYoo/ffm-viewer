@@ -145,7 +145,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock should be valid")
             .as_nanos();
-        let directory = std::env::temp_dir().join(format!("dev-preview-test-{suffix}"));
+        let directory = std::env::temp_dir().join(format!("ffm-viewer-test-{suffix}"));
         fs::create_dir_all(&directory).expect("temp directory should be created");
         let path = directory.join(name);
         fs::write(&path, contents).expect("fixture should be written");

@@ -216,7 +216,7 @@ export async function createApp(
     shell.append(main);
     root.replaceChildren(shell);
     renderWatchWarning();
-    document.title = `${payload.name} — Dev Preview`;
+    document.title = `${payload.name} — FFM Viewer`;
     if (previousScroll > 0) {
       requestAnimationFrame(() => window.scrollTo({ top: previousScroll }));
     }

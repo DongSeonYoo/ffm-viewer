@@ -7,7 +7,7 @@ const MARKDOWN_FIXTURE: DocumentPayload = {
   content: [
     '# A quiet document',
     '',
-    'Dev Preview turns source syntax into a calm reading surface.',
+    'FFM Viewer turns source syntax into a calm reading surface.',
     '',
     '> Structure should be visible without becoming decoration.',
     '',

@@ -36,7 +36,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("failed to build Dev Preview");
+        .expect("failed to build FFM Viewer");
 
     app.run(|app, event| {
         if let tauri::RunEvent::Opened { urls } = event {
