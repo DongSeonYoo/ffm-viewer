@@ -184,6 +184,7 @@ export async function createApp(
   let readSequence = 0;
   let openQueue = Promise.resolve();
   let untitledCounter = 0;
+  let activationRevision = 0;
 
   const shell = document.createElement('div');
   shell.className = 'app-shell';
@@ -246,6 +247,12 @@ export async function createApp(
   root.replaceChildren(shell);
 
   const activeTab = () => tabs.find((tab) => tab.id === activeId);
+
+  const setActiveId = (id: string | undefined) => {
+    if (activeId === id) return;
+    activeId = id;
+    activationRevision += 1;
+  };
 
   const snapshotScroll = () => {
     const tab = activeTab();
@@ -545,7 +552,7 @@ export async function createApp(
       dirty: false,
     };
     tabs.push(tab);
-    activeId = id;
+    setActiveId(id);
     recordHistory(id);
     return tab;
   }
@@ -648,7 +655,7 @@ export async function createApp(
       return;
     }
     snapshotScroll();
-    activeId = id;
+    setActiveId(id);
     if (addToHistory) recordHistory(id);
     const started = performance.now();
     renderChrome();
@@ -671,7 +678,7 @@ export async function createApp(
     historyIndex = Math.max(-1, Math.min(historyIndex, history.length - 1));
     if (wasActive) {
       const replacement = tabs[Math.min(index, tabs.length - 1)];
-      activeId = undefined;
+      setActiveId(undefined);
       if (replacement) {
         activateTab(replacement.id);
         return;
@@ -740,9 +747,11 @@ export async function createApp(
       else activateTab(direct.id);
       return;
     }
+    const revisionBeforeOpen = activationRevision;
     const fileWarning = await installActiveWatcher(path);
     try {
       const payload = await bridge.readDocument(path);
+      const watcherOwnershipChanged = activationRevision !== revisionBeforeOpen;
       const existing = tabs.find((tab) => tab.payload.path === payload.path);
       if (existing) {
         existing.warning = fileWarning;
@@ -759,17 +768,19 @@ export async function createApp(
       };
       tabs.push(tab);
       snapshotScroll();
-      activeId = tab.id;
+      setActiveId(tab.id);
       recordHistory(tab.id);
       const started = performance.now();
       renderChrome();
       renderActive();
       root.dataset.renderMs = (performance.now() - started).toFixed(2);
-      void installActiveWatcher(tab.payload.path).then((warningMessage) => {
-        if (activeId !== tab.id) return;
-        tab.warning = warningMessage;
-        renderWarning();
-      });
+      if (watcherOwnershipChanged) {
+        void installActiveWatcher(tab.payload.path).then((warningMessage) => {
+          if (activeId !== tab.id) return;
+          tab.warning = warningMessage;
+          renderWarning();
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'File could not be opened.';
       const current = activeTab();
