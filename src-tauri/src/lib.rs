@@ -156,7 +156,7 @@ mod tests {
     use super::ExitState;
 
     #[test]
-    fn external_exit_stays_blocked_until_frontend_approval() {
+    fn app_handle_exit_stays_blocked_until_frontend_approval() {
         let state = ExitState::default();
 
         assert!(state.should_prevent_exit());
