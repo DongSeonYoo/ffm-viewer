@@ -920,6 +920,12 @@ a:focus-visible {
   font-size: 0.75rem;
 }
 
+.json-outline-status {
+  margin: 6px 8px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
 .json-outline-row {
   display: flex;
   min-width: 0;

@@ -18,6 +18,7 @@ import {
 import { tags } from '@lezer/highlight';
 
 const PAGE_SIZE = 100;
+const MAX_OUTLINE_CHARACTERS = 3_000_000;
 const DIAGNOSTICS_ENABLED = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
 let activeDiagnosticsDestroy: (() => void) | undefined;
 const VALUE_NODES = new Set([
@@ -270,18 +271,14 @@ function isExpandable(node: JsonSyntaxNode): boolean {
   return node.name === 'Object' || node.name === 'Array';
 }
 
-function createOutline(
+function populateOutline(
+  outline: HTMLElement,
   view: EditorView,
   source: string,
   syntaxRoot: JsonSyntaxNode,
-): HTMLElement {
-  const outline = document.createElement('nav');
-  outline.className = 'json-outline';
-  outline.setAttribute('role', 'tree');
-  outline.setAttribute('aria-label', 'JSON keys');
-
+): void {
   const root = syntaxRoot.firstChild;
-  if (!root || !isExpandable(root)) return outline;
+  if (!root || !isExpandable(root)) return;
   let activeNode: HTMLElement | undefined;
   let activeJump: HTMLButtonElement | undefined;
 
@@ -369,7 +366,6 @@ function createOutline(
   };
 
   renderPage(root, outline);
-  return outline;
 }
 
 function commonEditorExtensions(
@@ -425,9 +421,36 @@ export function createJsonCodeView(source: string): CodeViewElement {
   const view = new EditorView({ state, parent: code });
   let destroyDiagnostics: () => void = () => undefined;
 
-  // ponytail: full parse gives the outline stable offsets; revisit only if profiling says it matters.
-  const outlineTree = jsonLanguage.parser.parse(source);
-  wrapper.append(createOutline(view, source, outlineTree.topNode), code);
+  const outline = document.createElement('nav');
+  outline.className = 'json-outline';
+  outline.setAttribute('role', 'tree');
+  outline.setAttribute('aria-label', 'JSON keys');
+  outline.setAttribute('aria-busy', 'true');
+  const outlineStatus = document.createElement('p');
+  outlineStatus.className = 'json-outline-status';
+  outlineStatus.setAttribute('role', 'status');
+  outlineStatus.textContent = 'Building outline…';
+  outline.append(outlineStatus);
+  wrapper.append(outline, code);
+
+  let outlineTimer: number | undefined;
+  let outlineFrame: number | undefined;
+  if (source.length > MAX_OUTLINE_CHARACTERS) {
+    outline.removeAttribute('aria-busy');
+    outlineStatus.textContent = 'Outline is off for very large JSON.';
+  } else {
+    // ponytail: a worker can replace this ceiling if large-file outlines become necessary.
+    outlineFrame = window.requestAnimationFrame(() => {
+      outlineFrame = undefined;
+      outlineTimer = window.setTimeout(() => {
+        outlineTimer = undefined;
+        const outlineTree = jsonLanguage.parser.parse(source);
+        outline.replaceChildren();
+        outline.removeAttribute('aria-busy');
+        populateOutline(outline, view, source, outlineTree.topNode);
+      });
+    });
+  }
   if (DIAGNOSTICS_ENABLED) {
     const diagnostics = attachDiagnostics(wrapper, code, view, source);
     recordDiagnostics = diagnostics.record;
@@ -435,6 +458,8 @@ export function createJsonCodeView(source: string): CodeViewElement {
     recordDiagnostics('attached-panel');
   }
   wrapper.destroy = () => {
+    if (outlineFrame !== undefined) window.cancelAnimationFrame(outlineFrame);
+    if (outlineTimer !== undefined) window.clearTimeout(outlineTimer);
     destroyDiagnostics();
     view.destroy();
   };
