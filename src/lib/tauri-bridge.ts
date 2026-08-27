@@ -37,6 +37,7 @@ export function createTauriBridge(): DesktopBridge {
   let changeListener: Promise<UnlistenFn> | undefined;
   let errorListener: Promise<UnlistenFn> | undefined;
   let changeTimer: number | undefined;
+  let watchGeneration = 0;
 
   return {
     async chooseDocuments() {
@@ -62,6 +63,7 @@ export function createTauriBridge(): DesktopBridge {
     },
 
     async watchDocument(path, onChange, onError) {
+      const generation = ++watchGeneration;
       currentPath = path;
       currentChangeHandler = onChange;
       currentErrorHandler = onError;
@@ -82,6 +84,7 @@ export function createTauriBridge(): DesktopBridge {
       }
       await changeListener;
       await errorListener;
+      if (generation !== watchGeneration) return;
       await invoke('watch_document', { path });
     },
 
