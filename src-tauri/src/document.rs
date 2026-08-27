@@ -53,13 +53,24 @@ pub fn read_document_from_path(path: &Path) -> Result<DocumentPayload, String> {
         .metadata()
         .map_err(|_| "The selected document could not be inspected.".to_string())?;
     if !metadata.is_file() {
-        return Err("Select a Markdown or JSON file, not a directory.".into());
+        return Err("Select a supported file, not a directory.".into());
     }
-    if metadata.len() > MAX_DOCUMENT_BYTES {
-        return Err("This document is larger than the 50 MB safety limit.".into());
+    let kind = classify_extension(&canonical)?;
+    let (size_limit, size_error) = if kind == DocumentKind::Image {
+        (
+            MAX_IMAGE_BYTES,
+            "This image is larger than the 10 MB safety limit.",
+        )
+    } else {
+        (
+            MAX_DOCUMENT_BYTES,
+            "This document is larger than the 50 MB safety limit.",
+        )
+    };
+    if metadata.len() > size_limit {
+        return Err(size_error.into());
     }
 
-    let kind = classify_extension(&canonical)?;
     let bytes =
         fs::read(&canonical).map_err(|_| "The selected document could not be read.".to_string())?;
     let content = if kind == DocumentKind::Image {
@@ -110,7 +121,9 @@ fn write_document_to_path(path: &Path, content: &str) -> Result<(), String> {
         .write(true)
         .create_new(true)
         .open(&target)
-        .map_err(|_| "Choose a new file name. FFM will not overwrite an existing file.".to_string())?;
+        .map_err(|_| {
+            "Choose a new file name. FFM will not overwrite an existing file.".to_string()
+        })?;
     if file.write_all(content.as_bytes()).is_err() || file.sync_all().is_err() {
         drop(file);
         let _ = fs::remove_file(&target);
@@ -209,6 +222,17 @@ mod tests {
         path
     }
 
+    fn temp_sparse_file(name: &str, length: u64) -> PathBuf {
+        let path = temp_file(name, b"");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("fixture should open")
+            .set_len(length)
+            .expect("fixture length should be set");
+        path
+    }
+
     #[test]
     fn reads_supported_markdown_documents() {
         let path = temp_file("README.md", b"# Hello");
@@ -262,6 +286,26 @@ mod tests {
     }
 
     #[test]
+    fn enforces_the_image_document_size_limit() {
+        let allowed = temp_sparse_file("allowed.png", MAX_IMAGE_BYTES);
+        let payload = read_document_from_path(&allowed).expect("10 MB image should load");
+        assert_eq!(payload.kind, DocumentKind::Image);
+
+        let oversized = temp_sparse_file("oversized.png", MAX_IMAGE_BYTES + 1);
+        let error = read_document_from_path(&oversized).expect_err("oversized image should fail");
+        assert_eq!(error, "This image is larger than the 10 MB safety limit.");
+    }
+
+    #[test]
+    fn rejects_directories_with_a_supported_file_message() {
+        let seed = temp_file("seed.txt", b"");
+        let directory = seed.parent().expect("temp directory");
+
+        let error = read_document_from_path(directory).expect_err("directories should fail");
+        assert_eq!(error, "Select a supported file, not a directory.");
+    }
+
+    #[test]
     fn rejects_unsupported_extensions() {
         let path = temp_file("notes.exe", b"hello");
         let error = read_document_from_path(&path).expect_err("executables are out of scope");
@@ -276,7 +320,10 @@ mod tests {
 
         write_document_to_path(&path, "# Saved").expect("scratch should save");
 
-        assert_eq!(fs::read_to_string(&path).expect("saved contents"), "# Saved");
+        assert_eq!(
+            fs::read_to_string(&path).expect("saved contents"),
+            "# Saved"
+        );
     }
 
     #[test]
@@ -299,7 +346,10 @@ mod tests {
             .expect_err("existing user files must stay untouched");
 
         assert!(error.contains("not overwrite"));
-        assert_eq!(fs::read_to_string(path).expect("original remains"), "original");
+        assert_eq!(
+            fs::read_to_string(path).expect("original remains"),
+            "original"
+        );
     }
 
     #[test]
