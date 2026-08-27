@@ -91,7 +91,10 @@ backed_up=0
 trap - EXIT HUP INT TERM
 
 if [ "${FFM_DEV_SKIP_LAUNCH:-0}" != "1" ]; then
-  open "$install_app"
+  if ! open "$install_app"; then
+    sleep 0.5
+    open "$install_app"
+  fi
 fi
 
 echo "Updated $PWD/FFM_dev.dmg"
