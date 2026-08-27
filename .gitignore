@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+src-tauri/target/
+.DS_Store
+
+# Research clones and generated deliverables are not product source.
+work/
+outputs/
+
