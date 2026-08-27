@@ -41,7 +41,7 @@ describe('createJsonCodeView', () => {
     nonceSource.remove();
   });
 
-  it('defers outline work until after the code view is available', () => {
+  it('defers outline work until after the code view is available', async () => {
     const parse = vi.spyOn(jsonLanguage.parser, 'parse');
     const viewer = createJsonCodeView(formatJsonDocument('{"ready":true}'));
     document.body.append(viewer);
@@ -52,6 +52,8 @@ describe('createJsonCodeView', () => {
     expect(viewer.querySelector('.json-outline-status')?.textContent).toContain('Building');
     expect(parse).not.toHaveBeenCalled();
     viewer.destroy();
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    expect(parse).not.toHaveBeenCalled();
     parse.mockRestore();
   });
 
