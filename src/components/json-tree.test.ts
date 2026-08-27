@@ -48,6 +48,21 @@ describe('createJsonCodeView', () => {
 
     expect(viewer.querySelector('.cm-content')).not.toBeNull();
     expect(viewer.querySelectorAll('[data-action="jump"]')).toHaveLength(0);
+    expect(viewer.querySelector('.json-outline')?.getAttribute('aria-busy')).toBe('true');
+    expect(viewer.querySelector('.json-outline-status')?.textContent).toContain('Building');
+    expect(parse).not.toHaveBeenCalled();
+    viewer.destroy();
+    parse.mockRestore();
+  });
+
+  it('keeps very large JSON responsive without building an outline', () => {
+    const parse = vi.spyOn(jsonLanguage.parser, 'parse');
+    const viewer = createJsonCodeView(`{"value":"${'x'.repeat(3_000_000)}"}`);
+    document.body.append(viewer);
+
+    const outline = viewer.querySelector('.json-outline');
+    expect(outline?.getAttribute('aria-busy')).toBeNull();
+    expect(outline?.textContent).toContain('Outline is off');
     expect(parse).not.toHaveBeenCalled();
     viewer.destroy();
     parse.mockRestore();

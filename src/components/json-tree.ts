@@ -18,6 +18,7 @@ import {
 import { tags } from '@lezer/highlight';
 
 const PAGE_SIZE = 100;
+const MAX_OUTLINE_CHARACTERS = 3_000_000;
 const DIAGNOSTICS_ENABLED = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
 let activeDiagnosticsDestroy: (() => void) | undefined;
 const VALUE_NODES = new Set([
@@ -424,18 +425,32 @@ export function createJsonCodeView(source: string): CodeViewElement {
   outline.className = 'json-outline';
   outline.setAttribute('role', 'tree');
   outline.setAttribute('aria-label', 'JSON keys');
+  outline.setAttribute('aria-busy', 'true');
+  const outlineStatus = document.createElement('p');
+  outlineStatus.className = 'json-outline-status';
+  outlineStatus.setAttribute('role', 'status');
+  outlineStatus.textContent = 'Building outline…';
+  outline.append(outlineStatus);
   wrapper.append(outline, code);
 
-  // ponytail: keep stable full-parse offsets, but let the code view paint first.
   let outlineTimer: number | undefined;
-  let outlineFrame: number | undefined = window.requestAnimationFrame(() => {
-    outlineFrame = undefined;
-    outlineTimer = window.setTimeout(() => {
-      outlineTimer = undefined;
-      const outlineTree = jsonLanguage.parser.parse(source);
-      populateOutline(outline, view, source, outlineTree.topNode);
+  let outlineFrame: number | undefined;
+  if (source.length > MAX_OUTLINE_CHARACTERS) {
+    outline.removeAttribute('aria-busy');
+    outlineStatus.textContent = 'Outline is off for very large JSON.';
+  } else {
+    // ponytail: a worker can replace this ceiling if large-file outlines become necessary.
+    outlineFrame = window.requestAnimationFrame(() => {
+      outlineFrame = undefined;
+      outlineTimer = window.setTimeout(() => {
+        outlineTimer = undefined;
+        const outlineTree = jsonLanguage.parser.parse(source);
+        outline.replaceChildren();
+        outline.removeAttribute('aria-busy');
+        populateOutline(outline, view, source, outlineTree.topNode);
+      });
     });
-  });
+  }
   if (DIAGNOSTICS_ENABLED) {
     const diagnostics = attachDiagnostics(wrapper, code, view, source);
     recordDiagnostics = diagnostics.record;
