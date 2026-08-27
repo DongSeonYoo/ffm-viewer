@@ -19,6 +19,9 @@ test('JSON opens as formatted code with a key outline', async ({ page }) => {
   await expect(page.locator('.json-outline')).toContainText('service');
   await expect(page.locator('.json-outline')).not.toContainText('name');
   await expect(page.locator('.cm-content')).toContainText('api');
+  const viewport = await page.locator('.document-viewport').boundingBox();
+  const editor = await page.locator('.cm-editor').boundingBox();
+  expect(editor?.height).toBe(viewport?.height);
 
   await page
     .locator('[data-outline-label="service"] [data-action="toggle"]')
@@ -60,6 +63,27 @@ test('large JSON reaches first paint without filling the outline DOM', async ({ 
   expect(Number.isFinite(renderMs)).toBe(true);
   expect(renderMs).toBeGreaterThanOrEqual(0);
   expect(renderMs).toBeLessThan(500);
+});
+
+test('multiple files stay open and keyboard navigation wraps', async ({ page }) => {
+  await page.goto('/?fixture=multi');
+  await expect(page.getByRole('tab')).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Open document' }).click();
+  await page.getByRole('button', { name: 'Open document' }).click();
+  await expect(page.getByRole('tab')).toHaveCount(3);
+  await expect(page.locator('[data-open-file]')).toHaveCount(3);
+  await expect(page.locator('[data-section-count="files"]')).toHaveText('3');
+
+  await page.keyboard.press('Meta+Alt+ArrowRight');
+  await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
+  await page.keyboard.press('Meta+9');
+  await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible();
+
+  await page.keyboard.press('Meta+k');
+  await page.locator('[data-quick-switch-input]').fill('service');
+  await page.locator('[data-quick-switch-input]').press('Enter');
+  await expect(page.locator('.json-code-view')).toBeVisible();
 });
 
 function contrastRatio(first: string, second: string): number {

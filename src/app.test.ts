@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from './app';
+import { createApp } from './app-shell';
 import type { DesktopBridge, DocumentPayload } from './lib/desktop-bridge';
 
 function markdownDocument(content = '# Read me'): DocumentPayload {
@@ -63,7 +63,7 @@ describe('createApp', () => {
     const { bridge } = createBridge();
     await createApp(document.querySelector('#app')!, bridge);
 
-    expect(document.querySelector('button')?.textContent).toMatch(/Open document/i);
+    expect(document.querySelector('.empty-state button')?.textContent).toMatch(/Open document/i);
     expect(document.body.textContent).toContain('Markdown or JSON');
   });
 
@@ -102,6 +102,149 @@ describe('createApp', () => {
     expect(document.querySelector('.json-outline')?.textContent).toContain('service');
     expect(document.querySelector('.cm-editor')).not.toBeNull();
     expect(document.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
+  });
+
+  it('keeps opened documents in tabs and reuses an existing tab', async () => {
+    const readme = markdownDocument('# Readme');
+    const config = jsonDocument();
+    const { bridge, requestOpen } = createBridge({
+      [readme.path]: readme,
+      [config.path]: config,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+
+    requestOpen(readme.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
+    requestOpen(config.path);
+    await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
+
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(document.querySelectorAll('[data-open-file]')).toHaveLength(2);
+    expect(document.querySelector('[data-section-count="files"]')?.textContent).toBe('2');
+
+    requestOpen(readme.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(
+      document.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
+    ).toContain('readme.md');
+  });
+
+  it('wraps adjacent tab navigation and supports numbered file shortcuts', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const third = { ...markdownDocument('# Third'), path: '/tmp/third.md', name: 'third.md' };
+    const { bridge, requestOpen } = createBridge({
+      [first.path]: first,
+      [second.path]: second,
+      [third.path]: third,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    for (const payload of [first, second, third]) {
+      requestOpen(payload.path);
+      await vi.waitFor(() => expect(document.body.textContent).toContain(payload.content.slice(2)));
+    }
+
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      metaKey: true,
+      altKey: true,
+    }));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '9', metaKey: true }));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Third'));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', metaKey: true }));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+  });
+
+  it('navigates document history with mouse buttons', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const { bridge, requestOpen } = createBridge({
+      [first.path]: first,
+      [second.path]: second,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(first.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+    requestOpen(second.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
+
+    document.querySelector<HTMLButtonElement>('[data-history="back"]')?.click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+    document.querySelector<HTMLButtonElement>('[data-history="forward"]')?.click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
+  });
+
+  it('keeps history aligned when an earlier inactive tab closes', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const third = { ...markdownDocument('# Third'), path: '/tmp/third.md', name: 'third.md' };
+    const { bridge, requestOpen } = createBridge({
+      [first.path]: first,
+      [second.path]: second,
+      [third.path]: third,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    for (const payload of [first, second, third]) {
+      requestOpen(payload.path);
+      await vi.waitFor(() => expect(document.body.textContent).toContain(payload.content.slice(2)));
+    }
+
+    document.querySelector<HTMLButtonElement>('[data-history="back"]')?.click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
+    document.querySelector<HTMLButtonElement>('[aria-label="Close readme.md"]')?.click();
+    document.querySelector<HTMLButtonElement>('[data-history="forward"]')?.click();
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Third'));
+  });
+
+  it('does not rebuild the active document when an inactive tab closes', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const { bridge, requestOpen } = createBridge({
+      [first.path]: first,
+      [second.path]: second,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(first.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+    requestOpen(second.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
+    document.querySelector<HTMLButtonElement>('[data-open-file="/tmp/readme.md"]')?.click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+    const article = document.querySelector('.markdown-document');
+
+    document.querySelector<HTMLButtonElement>('[aria-label="Close second.md"]')?.click();
+
+    expect(document.querySelector('.markdown-document')).toBe(article);
+    expect(document.body.textContent).toContain('First');
+  });
+
+  it('quickly switches open files with Cmd+K', async () => {
+    const first = markdownDocument('# Readme');
+    const second = { ...markdownDocument('# Notes'), path: '/tmp/notes.md', name: 'notes.md' };
+    const { bridge, requestOpen } = createBridge({
+      [first.path]: first,
+      [second.path]: second,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(first.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
+    requestOpen(second.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Notes'));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-quick-switch-input]');
+    expect(input).not.toBeNull();
+    input!.value = 'read';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
+    expect(document.querySelector('[data-quick-switcher]')).toBeNull();
   });
 
   it('shows a recoverable error for malformed JSON', async () => {

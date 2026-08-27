@@ -40,24 +40,42 @@ const LARGE_JSON_FIXTURE: DocumentPayload = {
   ),
 };
 
+const SINGLE_FIXTURES = {
+  markdown: MARKDOWN_FIXTURE,
+  json: JSON_FIXTURE,
+  'json-large': LARGE_JSON_FIXTURE,
+} as const;
+
 export function createBrowserPreviewBridge(
-  fixture: 'markdown' | 'json' | 'json-large',
+  fixture: 'markdown' | 'json' | 'json-large' | 'multi',
 ): DesktopBridge {
-  const payload = fixture === 'json-large'
-    ? LARGE_JSON_FIXTURE
-    : fixture === 'json'
-      ? JSON_FIXTURE
-      : MARKDOWN_FIXTURE;
+  const payloads = fixture === 'multi'
+    ? [
+        MARKDOWN_FIXTURE,
+        JSON_FIXTURE,
+        {
+          ...MARKDOWN_FIXTURE,
+          path: '/fixtures/notes.md',
+          name: 'notes.md',
+          content: '# Notes\n\nA second Markdown document.',
+        },
+      ]
+    : [SINGLE_FIXTURES[fixture]];
   let pending = true;
+  let nextChoice = fixture === 'multi' ? 1 : 0;
 
   return {
-    chooseDocument: async () => payload.path,
-    readDocument: async () => payload,
+    chooseDocument: async () => payloads[Math.min(nextChoice++, payloads.length - 1)]?.path ?? null,
+    readDocument: async (path) => {
+      const payload = payloads.find((candidate) => candidate.path === path);
+      if (!payload) throw new Error('Fixture not found.');
+      return payload;
+    },
     watchDocument: async () => undefined,
     takePendingOpen: async () => {
       if (!pending) return null;
       pending = false;
-      return payload.path;
+      return payloads[0]?.path ?? null;
     },
     onOpenRequested: async () => () => undefined,
     onFileDropped: async () => () => undefined,
