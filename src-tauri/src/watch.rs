@@ -1,8 +1,7 @@
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
 #[derive(Default)]
@@ -34,8 +33,6 @@ pub fn watch_document(
         .to_path_buf();
     let target_for_event = target.clone();
     let target_string = target.to_string_lossy().into_owned();
-    let last_emission = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
-
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
         let Ok(event) = result else { return };
         if !event
@@ -46,25 +43,12 @@ pub fn watch_document(
             return;
         }
 
-        let should_emit = last_emission
-            .lock()
-            .map(|mut previous| {
-                if previous.elapsed() < Duration::from_millis(90) {
-                    false
-                } else {
-                    *previous = Instant::now();
-                    true
-                }
-            })
-            .unwrap_or(false);
-        if should_emit {
-            let _ = app.emit(
-                "document-changed",
-                PathEvent {
-                    path: target_string.clone(),
-                },
-            );
-        }
+        let _ = app.emit(
+            "document-changed",
+            PathEvent {
+                path: target_string.clone(),
+            },
+        );
     })
     .map_err(|_| "The document watcher could not be started.".to_string())?;
 

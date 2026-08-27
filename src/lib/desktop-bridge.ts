@@ -5,7 +5,6 @@ export interface DocumentPayload {
   readonly name: string;
   readonly kind: DocumentKind;
   readonly content: string;
-  readonly baseDir?: string;
 }
 
 export type Dispose = () => void;

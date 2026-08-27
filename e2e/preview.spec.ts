@@ -36,3 +36,12 @@ test('the reading surface follows dark appearance without changing its hierarchy
   expect(colors.background).not.toBe('rgb(255, 255, 255)');
   expect(colors.background).not.toBe(colors.text);
 });
+
+test('large JSON reaches first paint without materializing the full tree', async ({ page }) => {
+  await page.goto('/?fixture=json-large');
+
+  await expect(page.locator('.json-tree')).toBeVisible();
+  await expect(page.locator('[data-json-node]')).toHaveCount(101);
+  const renderMs = Number(await page.locator('#app').getAttribute('data-render-ms'));
+  expect(renderMs).toBeLessThan(500);
+});

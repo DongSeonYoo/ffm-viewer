@@ -7,7 +7,10 @@ if (!root) throw new Error('Application root is missing.');
 
 async function bootstrap(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
-  if (import.meta.env.DEV && (fixture === 'markdown' || fixture === 'json')) {
+  if (
+    import.meta.env.DEV &&
+    (fixture === 'markdown' || fixture === 'json' || fixture === 'json-large')
+  ) {
     const { createBrowserPreviewBridge } = await import('./lib/browser-preview-bridge');
     await createApp(root!, createBrowserPreviewBridge(fixture));
     return;

@@ -20,6 +20,7 @@ struct PathEvent {
 }
 
 impl OpenRequestState {
+    #[cfg(test)]
     pub fn queue(&self, path: String) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.pending = Some(path);
@@ -32,11 +33,22 @@ impl OpenRequestState {
         inner.pending.take()
     }
 
+    #[cfg(test)]
     pub fn is_ready(&self) -> bool {
         self.inner
             .lock()
             .map(|inner| inner.frontend_ready)
             .unwrap_or(false)
+    }
+
+    fn deliver_or_queue(&self, path: String) -> Option<String> {
+        let mut inner = self.inner.lock().ok()?;
+        if inner.frontend_ready {
+            Some(path)
+        } else {
+            inner.pending = Some(path);
+            None
+        }
     }
 }
 
@@ -54,10 +66,8 @@ pub fn dispatch_or_queue(app: &AppHandle, path: &Path) {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let value = canonical.to_string_lossy().into_owned();
     let state = app.state::<OpenRequestState>();
-    if state.is_ready() {
-        let _ = app.emit("file-open-requested", PathEvent { path: value });
-    } else {
-        state.queue(value);
+    if let Some(path) = state.deliver_or_queue(value) {
+        let _ = app.emit("file-open-requested", PathEvent { path });
     }
 }
 
@@ -87,5 +97,9 @@ mod tests {
         assert!(!state.is_ready());
         state.mark_ready_and_take();
         assert!(state.is_ready());
+        assert_eq!(
+            state.deliver_or_queue("/tmp/later.md".into()),
+            Some("/tmp/later.md".into())
+        );
     }
 }

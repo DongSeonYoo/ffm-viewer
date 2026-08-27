@@ -161,11 +161,16 @@ export async function createApp(
     try {
       const payload = await bridge.readDocument(path);
       if (sequence !== loadSequence) return;
+      const shouldStartWatch = currentPath !== payload.path;
       currentPath = payload.path;
+      const renderStarted = performance.now();
       renderDocument(payload);
-      await bridge.watchDocument(payload.path, (changedPath) => {
-        if (changedPath === currentPath) void loadDocument(changedPath);
-      });
+      root.dataset.renderMs = (performance.now() - renderStarted).toFixed(2);
+      if (shouldStartWatch) {
+        await bridge.watchDocument(payload.path, (changedPath) => {
+          if (changedPath === currentPath) void loadDocument(changedPath);
+        });
+      }
     } catch (error) {
       if (sequence !== loadSequence) return;
       renderError(error instanceof Error ? error.message : 'File could not be opened.');

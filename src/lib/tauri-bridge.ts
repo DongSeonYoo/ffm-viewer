@@ -22,6 +22,7 @@ export function createTauriBridge(): DesktopBridge {
   let currentPath = '';
   let currentChangeHandler: PathHandler | undefined;
   let changeListener: Promise<UnlistenFn> | undefined;
+  let changeTimer: number | undefined;
 
   return {
     async chooseDocument() {
@@ -47,7 +48,12 @@ export function createTauriBridge(): DesktopBridge {
       currentChangeHandler = onChange;
       if (!changeListener) {
         changeListener = listen<PathEvent>('document-changed', ({ payload }) => {
-          if (payload.path === currentPath) currentChangeHandler?.(payload.path);
+          if (payload.path !== currentPath) return;
+          if (changeTimer !== undefined) window.clearTimeout(changeTimer);
+          changeTimer = window.setTimeout(() => {
+            currentChangeHandler?.(payload.path);
+            changeTimer = undefined;
+          }, 90);
         });
       }
       await changeListener;

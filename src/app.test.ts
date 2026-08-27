@@ -118,6 +118,7 @@ describe('createApp', () => {
     documents[payload.path] = markdownDocument('# After');
     notifyChange(payload.path);
     await vi.waitFor(() => expect(document.body.textContent).toContain('After'));
+    expect(bridge.watchDocument).toHaveBeenCalledTimes(1);
   });
 
   it('opens safe external Markdown links outside the preview window', async () => {

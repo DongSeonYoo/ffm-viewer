@@ -27,10 +27,27 @@ const JSON_FIXTURE: DocumentPayload = {
   }),
 };
 
+const LARGE_JSON_FIXTURE: DocumentPayload = {
+  path: '/fixtures/large-response.json',
+  name: 'large-response.json',
+  kind: 'json',
+  content: JSON.stringify(
+    Array.from({ length: 20_000 }, (_, id) => ({
+      id,
+      status: id % 2 === 0 ? 'ready' : 'pending',
+      metadata: { region: 'local', attempts: id % 4 },
+    })),
+  ),
+};
+
 export function createBrowserPreviewBridge(
-  fixture: 'markdown' | 'json',
+  fixture: 'markdown' | 'json' | 'json-large',
 ): DesktopBridge {
-  const payload = fixture === 'json' ? JSON_FIXTURE : MARKDOWN_FIXTURE;
+  const payload = fixture === 'json-large'
+    ? LARGE_JSON_FIXTURE
+    : fixture === 'json'
+      ? JSON_FIXTURE
+      : MARKDOWN_FIXTURE;
   let pending = true;
 
   return {

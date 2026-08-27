@@ -20,7 +20,6 @@ pub struct DocumentPayload {
     pub name: String,
     pub kind: DocumentKind,
     pub content: String,
-    pub base_dir: String,
 }
 
 fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
@@ -62,18 +61,11 @@ pub fn read_document_from_path(path: &Path) -> Result<DocumentPayload, String> {
         .and_then(|value| value.to_str())
         .ok_or_else(|| "The selected document has an invalid file name.".to_string())?
         .to_string();
-    let base_dir = canonical
-        .parent()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_string();
-
     Ok(DocumentPayload {
         path: canonical.to_string_lossy().into_owned(),
         name,
         kind,
         content,
-        base_dir,
     })
 }
 
