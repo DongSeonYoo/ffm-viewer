@@ -11,16 +11,27 @@ test('Markdown opens as a focused article rather than an editor', async ({ page 
   expect(article?.width).toBeLessThanOrEqual(768);
 });
 
-test('JSON reveals nested structure on demand', async ({ page }) => {
+test('JSON opens as formatted code with a key outline', async ({ page }) => {
   await page.goto('/?fixture=json');
 
-  await expect(page.locator('.json-tree')).toBeVisible();
-  await expect(page.getByText('"service"', { exact: true })).toBeVisible();
-  await expect(page.getByText('api', { exact: false })).toHaveCount(0);
+  await expect(page.locator('.json-code-view')).toBeVisible();
+  await expect(page.locator('.cm-lineNumbers')).toBeVisible();
+  await expect(page.locator('.json-outline')).toContainText('service');
+  await expect(page.locator('.json-outline')).not.toContainText('name');
+  await expect(page.locator('.cm-content')).toContainText('api');
 
-  await page.locator('[data-path="$.service"] [data-action="toggle"]').click();
-  await expect(page.getByText('"api"', { exact: true })).toBeVisible();
-  await expect(page.locator('textarea')).toHaveCount(0);
+  await page
+    .locator('[data-outline-label="service"] [data-action="toggle"]')
+    .click();
+  await expect(page.locator('.json-outline')).toContainText('name');
+  await page.locator('[data-action="jump"][data-outline-label="name"]').click();
+  await expect(page.locator('.cm-activeLine')).toContainText('"name"');
+  const content = page.locator('.cm-content');
+  const source = await content.textContent();
+  await content.press('a');
+  await expect(content).toHaveText(source ?? '');
+  await content.press('Meta+f');
+  await expect(page.locator('.cm-search')).toBeVisible();
 });
 
 test('the reading surface follows dark appearance without changing its hierarchy', async ({
@@ -37,11 +48,12 @@ test('the reading surface follows dark appearance without changing its hierarchy
   expect(contrastRatio(colors.background, colors.text)).toBeGreaterThanOrEqual(4.5);
 });
 
-test('large JSON reaches first paint without materializing the full tree', async ({ page }) => {
+test('large JSON reaches first paint without filling the outline DOM', async ({ page }) => {
   await page.goto('/?fixture=json-large');
 
-  await expect(page.locator('.json-tree')).toBeVisible();
-  await expect(page.locator('[data-json-node]')).toHaveCount(101);
+  await expect(page.locator('.json-code-view')).toBeVisible();
+  await expect(page.locator('[data-action="jump"]')).toHaveCount(100);
+  await expect(page.locator('[data-action="more"]')).toBeVisible();
   const renderValue = await page.locator('#app').getAttribute('data-render-ms');
   expect(renderValue).not.toBeNull();
   const renderMs = Number(renderValue);

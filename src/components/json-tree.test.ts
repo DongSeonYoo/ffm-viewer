@@ -1,65 +1,61 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createJsonTree } from './json-tree';
-import { parseJsonDocument } from '../lib/json-document';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createJsonCodeView } from './json-tree';
+import { formatJsonDocument } from '../lib/json-document';
 
-describe('createJsonTree', () => {
+describe('createJsonCodeView', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    Object.assign(navigator, {
-      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
-    });
   });
 
-  it('shows the root and its immediate children while nested containers stay collapsed', () => {
-    const tree = createJsonTree(
-      parseJsonDocument('{"service":{"name":"api"},"ready":true}'),
+  it('shows formatted read-only code and top-level outline keys', () => {
+    const source = formatJsonDocument(
+      '{"service":{"name":"api"},"ready":true}',
     );
-    document.body.append(tree);
+    const viewer = createJsonCodeView(source);
+    document.body.append(viewer);
 
-    expect(tree.textContent).toContain('service');
-    expect(tree.textContent).toContain('ready');
-    expect(tree.textContent).not.toContain('name');
-    expect(tree.querySelectorAll('[data-json-node]')).toHaveLength(3);
+    const outline = viewer.querySelector('.json-outline');
+    expect(outline?.textContent).toContain('service');
+    expect(outline?.textContent).toContain('ready');
+    expect(outline?.textContent).not.toContain('name');
+    expect(viewer.querySelector('.cm-lineNumbers')).not.toBeNull();
+    expect(viewer.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
+    viewer.destroy();
   });
 
-  it('materializes nested children only after the user expands a node', () => {
-    const tree = createJsonTree(
-      parseJsonDocument('{"service":{"name":"api","ready":true}}'),
+  it('expands nested keys and jumps to the selected code line', () => {
+    const source = formatJsonDocument(
+      '{"service":{"name":"api","port":4000}}',
     );
-    document.body.append(tree);
+    const viewer = createJsonCodeView(source);
+    document.body.append(viewer);
 
-    const serviceToggle = tree.querySelector<HTMLButtonElement>(
-      '[data-path="$.service"] [data-action="toggle"]',
+    viewer
+      .querySelector<HTMLButtonElement>('[data-outline-label="service"] [data-action="toggle"]')
+      ?.click();
+    const name = viewer.querySelector<HTMLButtonElement>(
+      '[data-action="jump"][data-outline-label="name"]',
     );
-    serviceToggle?.click();
+    expect(name).not.toBeNull();
 
-    expect(tree.textContent).toContain('name');
-    expect(tree.textContent).toContain('api');
-    expect(serviceToggle?.getAttribute('aria-expanded')).toBe('true');
+    name?.click();
+    expect(viewer.querySelector('.cm-activeLine')?.textContent).toContain('"name"');
+    viewer.destroy();
   });
 
-  it('reveals large collections in pages instead of creating an unbounded DOM', () => {
-    const root = parseJsonDocument(JSON.stringify(Array.from({ length: 140 }, (_, i) => i)));
-    const tree = createJsonTree(root);
-    document.body.append(tree);
+  it('pages large arrays instead of filling the outline DOM', () => {
+    const source = formatJsonDocument(
+      JSON.stringify(Array.from({ length: 140 }, (_, index) => ({ index }))),
+    );
+    const viewer = createJsonCodeView(source);
+    document.body.append(viewer);
 
-    expect(tree.querySelectorAll('[data-json-node]')).toHaveLength(101);
-    const more = tree.querySelector<HTMLButtonElement>('[data-action="more"]');
-    expect(more?.textContent).toContain('40 more');
+    expect(viewer.querySelectorAll('[data-action="jump"]')).toHaveLength(100);
+    const more = viewer.querySelector<HTMLButtonElement>('[data-action="more"]');
+    expect(more?.textContent).toContain('more');
 
     more?.click();
-    expect(tree.querySelectorAll('[data-json-node]')).toHaveLength(141);
-    expect(tree.querySelector('[data-action="more"]')).toBeNull();
-  });
-
-  it('copies a node path without enabling content editing', async () => {
-    const tree = createJsonTree(parseJsonDocument('{"service":{"name":"api"}}'));
-    document.body.append(tree);
-    tree
-      .querySelector<HTMLButtonElement>('[data-path="$.service"] [data-action="copy-path"]')
-      ?.click();
-
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('$.service');
-    expect(tree.querySelector('textarea, input:not([type="checkbox"])')).toBeNull();
+    expect(viewer.querySelectorAll('[data-action="jump"]')).toHaveLength(140);
+    viewer.destroy();
   });
 });

@@ -92,15 +92,16 @@ describe('createApp', () => {
     );
   });
 
-  it('renders a JSON file as an expandable inspector instead of editable text', async () => {
+  it('renders a JSON file as read-only code with a key outline', async () => {
     const payload = jsonDocument();
     const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
     await createApp(document.querySelector('#app')!, bridge);
 
     requestOpen(payload.path);
-    await vi.waitFor(() => expect(document.querySelector('.json-tree')).not.toBeNull());
-    expect(document.body.textContent).toContain('service');
-    expect(document.querySelector('textarea')).toBeNull();
+    await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
+    expect(document.querySelector('.json-outline')?.textContent).toContain('service');
+    expect(document.querySelector('.cm-editor')).not.toBeNull();
+    expect(document.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
   });
 
   it('shows a recoverable error for malformed JSON', async () => {

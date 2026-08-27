@@ -1,6 +1,6 @@
-import { createJsonTree } from './components/json-tree';
+import { createJsonCodeView, type JsonCodeViewElement } from './components/json-tree';
 import type { DesktopBridge, DocumentPayload } from './lib/desktop-bridge';
-import { parseJsonDocument } from './lib/json-document';
+import { formatJsonDocument } from './lib/json-document';
 import { renderMarkdown } from './lib/markdown';
 
 let activeKeydownListener: ((event: KeyboardEvent) => void) | undefined;
@@ -128,6 +128,7 @@ export async function createApp(
 ): Promise<void> {
   let watchedPath: string | undefined;
   let watchWarning: string | undefined;
+  let activeJsonView: JsonCodeViewElement | undefined;
   let loadSequence = 0;
   let renderSequence = 0;
 
@@ -149,6 +150,8 @@ export async function createApp(
   window.addEventListener('keydown', activeKeydownListener);
 
   const renderError = (message: string, payload?: DocumentPayload) => {
+    activeJsonView?.destroy();
+    activeJsonView = undefined;
     root.replaceChildren();
     if (payload) root.append(createHeader(payload, chooseDocument));
     const state = document.createElement('main');
@@ -175,6 +178,8 @@ export async function createApp(
   };
 
   const renderDocument = (payload: DocumentPayload) => {
+    activeJsonView?.destroy();
+    activeJsonView = undefined;
     const previousScroll = window.scrollY;
     const renderId = ++renderSequence;
     const shell = document.createElement('div');
@@ -206,7 +211,8 @@ export async function createApp(
       main.append(article);
     } else {
       try {
-        main.append(createJsonTree(parseJsonDocument(payload.content)));
+        activeJsonView = createJsonCodeView(formatJsonDocument(payload.content));
+        main.append(activeJsonView);
       } catch (error) {
         renderError(error instanceof Error ? error.message : 'Invalid JSON.', payload);
         return;
