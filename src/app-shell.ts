@@ -352,6 +352,10 @@ export async function createApp(
     tablist.append(add);
     filesSection.count.textContent = String(tabs.length);
     updateHistoryButtons();
+    const selectedTab = tablist.querySelector<HTMLElement>('[aria-selected="true"]');
+    requestAnimationFrame(() => {
+      selectedTab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    });
   };
 
   const renderMarkdownOutline = (article: HTMLElement) => {
@@ -910,11 +914,6 @@ export async function createApp(
       if (tab) activateTab(tab.id);
       return;
     }
-    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'w' && activeId) {
-      event.preventDefault();
-      closeTab(activeId);
-      return;
-    }
     if (event.key === 'Escape') {
       if (root.querySelector('[data-quick-switcher]')) {
         closeQuickSwitcher();
@@ -948,6 +947,9 @@ export async function createApp(
   await Promise.all([
     bridge.onOpenRequested((path) => void queueDocument(path)),
     bridge.onFileDropped((path) => void queueDocument(path)),
+    bridge.onCloseActiveTab(() => {
+      if (activeId) closeTab(activeId);
+    }),
     bridge.onCloseRequested(canCloseWindow),
   ]);
   const pendingPaths = await bridge.takePendingOpen();

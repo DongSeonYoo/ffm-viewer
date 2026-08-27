@@ -119,6 +119,7 @@ export function createBrowserPreviewBridge(
     resolveLocalImage: async () => null,
     confirmClose: async () => 'discard',
     saveDocument: async () => false,
+    onCloseActiveTab: async () => () => undefined,
     onCloseRequested: async () => () => undefined,
   };
 }

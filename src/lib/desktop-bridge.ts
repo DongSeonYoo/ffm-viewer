@@ -30,5 +30,6 @@ export interface DesktopBridge {
     kind: Exclude<DocumentKind, 'image'>,
     content: string,
   ): Promise<boolean>;
+  onCloseActiveTab(handler: () => void): Promise<Dispose>;
   onCloseRequested(handler: () => Promise<boolean>): Promise<Dispose>;
 }

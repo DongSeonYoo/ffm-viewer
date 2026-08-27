@@ -48,7 +48,8 @@ Build a release bundle:
 pnpm build
 ```
 
-Build the latest local test image. This replaces `FFM_dev.dmg` in the project root:
+Build the latest local test image. This replaces `FFM_dev.dmg`, installs
+`/Applications/FFM_dev.app`, registers it with macOS, and launches it:
 
 ```bash
 pnpm build:dev-dmg

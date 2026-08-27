@@ -149,6 +149,19 @@ test('Scratch suggests YAML without switching until the user accepts', async ({ 
   await expect(page.locator('.document-tab.is-active .document-type')).toHaveText('YAML');
 });
 
+test('the horizontal tab strip keeps the active tab visible', async ({ page }) => {
+  await page.goto('/?fixture=markdown');
+  for (let index = 0; index < 12; index += 1) await page.keyboard.press('Meta+n');
+
+  const strip = await page.locator('.document-tabs').boundingBox();
+  const active = await page.locator('.document-tab.is-active').boundingBox();
+
+  expect(active).not.toBeNull();
+  expect(strip).not.toBeNull();
+  expect(active!.x).toBeGreaterThanOrEqual(strip!.x);
+  expect(active!.x + active!.width).toBeLessThanOrEqual(strip!.x + strip!.width + 1);
+});
+
 function contrastRatio(first: string, second: string): number {
   const luminance = (color: string) => {
     const channels = color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];

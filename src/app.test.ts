@@ -50,6 +50,7 @@ function createBridge(documents: Record<string, DocumentPayload> = {}) {
   let changeHandler: ((path: string) => void) | undefined;
   let watchErrorHandler: ((path: string) => void) | undefined;
   let closeHandler: (() => Promise<boolean>) | undefined;
+  let closeTabHandler: (() => void) | undefined;
 
   const bridge: DesktopBridge = {
     chooseDocuments: vi.fn().mockResolvedValue([]),
@@ -76,6 +77,10 @@ function createBridge(documents: Record<string, DocumentPayload> = {}) {
       closeHandler = handler;
       return () => undefined;
     }),
+    onCloseActiveTab: vi.fn(async (handler) => {
+      closeTabHandler = handler;
+      return () => undefined;
+    }),
   };
 
   return {
@@ -84,6 +89,7 @@ function createBridge(documents: Record<string, DocumentPayload> = {}) {
     notifyChange: (path: string) => changeHandler?.(path),
     notifyWatchError: (path: string) => watchErrorHandler?.(path),
     requestClose: async () => closeHandler?.() ?? true,
+    requestTabClose: () => closeTabHandler?.(),
   };
 }
 
@@ -364,6 +370,25 @@ describe('createApp', () => {
 
     await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
     expect(document.querySelector('[data-quick-switcher]')).toBeNull();
+  });
+
+  it('closes only the active tab when the native Close Tab menu fires', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const { bridge, requestOpen, requestTabClose } = createBridge({
+      [first.path]: first,
+      [second.path]: second,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(first.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+    requestOpen(second.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
+
+    requestTabClose();
+
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(document.body.textContent).toContain('First');
   });
 
   it('creates a Scratch tab with Cmd+N and previews pasted Markdown', async () => {

@@ -141,10 +141,34 @@ export function createTauriBridge(): DesktopBridge {
 
     async onCloseRequested(handler) {
       const window = getCurrentWebviewWindow();
+      let handling = false;
+      const canClose = async () => {
+        if (handling) return false;
+        handling = true;
+        try {
+          return await handler();
+        } finally {
+          handling = false;
+        }
+      };
       const unlisten = await window.onCloseRequested(async (event) => {
         event.preventDefault();
-        if (await handler()) await window.destroy();
+        if (await canClose()) await window.destroy();
       });
+      const unlistenQuit = await listen('quit-requested', () => {
+        void canClose().then((approved) => {
+          if (approved) return invoke<void>('exit_application');
+          return undefined;
+        });
+      });
+      return () => {
+        unlisten();
+        unlistenQuit();
+      };
+    },
+
+    async onCloseActiveTab(handler) {
+      const unlisten = await listen('close-active-tab', handler);
       return normalizeDispose(unlisten);
     },
   };
