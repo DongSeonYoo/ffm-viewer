@@ -4,9 +4,9 @@ coverage/
 test-results/
 playwright-report/
 src-tauri/target/
+src-tauri/gen/
 .DS_Store
 
 # Research clones and generated deliverables are not product source.
 work/
 outputs/
-

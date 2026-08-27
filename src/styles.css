@@ -1,0 +1,583 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+    "Noto Sans KR", "Noto Sans CJK KR", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  --page: #fcfcfa;
+  --surface: #f3f5f4;
+  --surface-strong: #e9eeeb;
+  --ink: #242927;
+  --ink-soft: #68716d;
+  --line: #dfe5e1;
+  --line-strong: #c9d2cd;
+  --accent: #0ca678;
+  --accent-soft: #dff7ee;
+  --selection: #b9ead8;
+  --code-comment: #7a8580;
+  --code-keyword: #a626a4;
+  --code-string: #2f7d4f;
+  --code-number: #9a5b13;
+  --code-function: #145ea8;
+  --code-punctuation: #4d5752;
+  --danger: #c53b3b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #171a19;
+    --surface: #202422;
+    --surface-strong: #2a302d;
+    --ink: #e7ebe8;
+    --ink-soft: #99a39e;
+    --line: #323834;
+    --line-strong: #48504c;
+    --accent: #63e6be;
+    --accent-soft: #163d32;
+    --selection: #245f4c;
+    --code-comment: #85918b;
+    --code-keyword: #e397df;
+    --code-string: #9ad5af;
+    --code-number: #e2b47b;
+    --code-function: #8fc6ff;
+    --code-punctuation: #c4ccc8;
+    --danger: #ff8787;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--page);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+#app,
+.app-shell {
+  min-height: 100vh;
+}
+
+.document-header {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  display: flex;
+  height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 32%);
+  background: color-mix(in srgb, var(--page), transparent 5%);
+  padding: 0 18px;
+  backdrop-filter: blur(14px);
+  -webkit-app-region: drag;
+}
+
+.document-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.document-kind {
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.document-name {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.open-document {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--page);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 650;
+  padding: 7px 13px;
+  -webkit-app-region: no-drag;
+}
+
+.open-document:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+
+.empty-state,
+.error-state {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  justify-items: center;
+  padding: 40px;
+  text-align: center;
+}
+
+.empty-mark {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  margin-bottom: 30px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--accent);
+  font-family: Georgia, serif;
+  font-size: 2rem;
+}
+
+.empty-state h1,
+.error-state h1 {
+  max-width: 520px;
+  margin: 0;
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-weight: 720;
+  letter-spacing: -0.035em;
+}
+
+.empty-state p,
+.error-state p {
+  max-width: 480px;
+  margin: 14px 0 28px;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.error-state h1 {
+  color: var(--danger);
+}
+
+.document-viewport {
+  width: 100%;
+}
+
+.markdown-document {
+  width: min(768px, calc(100% - 48px));
+  margin: 4.5rem auto 8rem;
+  color: var(--ink);
+  font-size: 1.125rem;
+  letter-spacing: -0.004em;
+  line-height: 1.72;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+}
+
+.markdown-document :is(h1, h2, h3, h4, h5, h6) {
+  margin: 3rem 0 1rem;
+  color: var(--ink);
+  font-weight: 720;
+  letter-spacing: -0.028em;
+  line-height: 1.35;
+  scroll-margin-top: 68px;
+}
+
+.markdown-document > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
+}
+
+.markdown-document h1 {
+  font-size: 2.5rem;
+}
+
+.markdown-document h2 {
+  font-size: 2rem;
+}
+
+.markdown-document h3 {
+  font-size: 1.5rem;
+}
+
+.markdown-document h4 {
+  font-size: 1.18rem;
+}
+
+.markdown-document h5,
+.markdown-document h6 {
+  font-size: 1rem;
+}
+
+.markdown-document p {
+  margin: 1.25rem 0;
+}
+
+.markdown-document a {
+  color: var(--accent);
+  text-decoration-color: color-mix(in srgb, var(--accent), transparent 55%);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.markdown-document a:hover {
+  text-decoration-color: currentColor;
+}
+
+.markdown-document strong {
+  font-weight: 720;
+}
+
+.markdown-document ul,
+.markdown-document ol {
+  margin: 1.2rem 0;
+  padding-left: 1.55rem;
+}
+
+.markdown-document li {
+  margin: 0.35rem 0;
+  padding-left: 0.2rem;
+}
+
+.markdown-document li::marker {
+  color: var(--ink-soft);
+}
+
+.markdown-document input[type='checkbox'] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0 0.5rem 0 -1.4rem;
+  accent-color: var(--accent);
+}
+
+.markdown-document blockquote {
+  margin: 2.2rem 0;
+  border-left: 4px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface);
+  padding: 1.1rem 1.4rem;
+  color: color-mix(in srgb, var(--ink), var(--ink-soft) 20%);
+}
+
+.markdown-document blockquote > :first-child {
+  margin-top: 0;
+}
+
+.markdown-document blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-document hr {
+  height: 1px;
+  margin: 3rem 0;
+  border: 0;
+  background: var(--line);
+}
+
+.markdown-document img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 3rem auto;
+  border-radius: 5px;
+}
+
+.markdown-document code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.markdown-document :not(pre) > code {
+  border-radius: 4px;
+  background: var(--surface-strong);
+  padding: 0.18em 0.38em;
+  font-size: 0.85em;
+  letter-spacing: 0;
+}
+
+.markdown-document pre {
+  margin: 1.8rem 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  overflow-x: auto;
+  padding: 1.05rem 1.15rem;
+  font-size: 0.875rem;
+  letter-spacing: 0;
+  line-height: 1.58;
+  tab-size: 2;
+}
+
+.markdown-document pre code {
+  color: var(--ink);
+  white-space: pre;
+}
+
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: var(--code-comment);
+}
+
+.token.punctuation {
+  color: var(--code-punctuation);
+}
+
+.token.property,
+.token.tag,
+.token.constant,
+.token.symbol,
+.token.deleted,
+.token.keyword,
+.token.atrule {
+  color: var(--code-keyword);
+}
+
+.token.boolean,
+.token.number {
+  color: var(--code-number);
+}
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: var(--code-string);
+}
+
+.token.operator,
+.token.entity,
+.token.url,
+.token.function,
+.token.class-name {
+  color: var(--code-function);
+}
+
+.markdown-document table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 1.8rem 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  border-spacing: 0;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.markdown-document th,
+.markdown-document td {
+  min-width: 7rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.65rem 0.8rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-document th {
+  background: var(--surface);
+  font-weight: 700;
+}
+
+.markdown-document tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-document :is(th, td):last-child {
+  border-right: 0;
+}
+
+.json-tree {
+  width: min(1120px, calc(100% - 36px));
+  margin: 2rem auto 7rem;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.json-node {
+  min-width: max-content;
+}
+
+.json-row {
+  display: flex;
+  min-height: 29px;
+  align-items: baseline;
+  border-radius: 5px;
+  gap: 7px;
+  padding: 2px 8px 2px 0;
+}
+
+.json-row:hover {
+  background: var(--surface);
+}
+
+.json-toggle {
+  width: 24px;
+  flex: 0 0 24px;
+  transform: rotate(0deg);
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.json-toggle[aria-expanded='true'] {
+  transform: rotate(90deg);
+  color: var(--accent);
+}
+
+.json-toggle:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.json-key {
+  color: var(--code-function);
+}
+
+.json-key[data-index='true'] {
+  min-width: 2ch;
+  color: var(--ink-soft);
+  text-align: right;
+}
+
+.json-root-label {
+  color: var(--accent);
+  font-weight: 750;
+}
+
+.json-punctuation,
+.json-summary {
+  color: var(--ink-soft);
+}
+
+.json-string {
+  color: var(--code-string);
+}
+
+.json-number {
+  color: var(--code-number);
+}
+
+.json-boolean {
+  color: var(--code-keyword);
+}
+
+.json-null {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+.json-copy-path {
+  max-width: 280px;
+  overflow: hidden;
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 0.68rem;
+  opacity: 0;
+  padding: 2px 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.json-row:hover .json-copy-path,
+.json-copy-path:focus-visible {
+  opacity: 1;
+}
+
+.json-children {
+  margin-left: 11px;
+  border-left: 1px solid var(--line);
+  padding-left: 13px;
+}
+
+.json-node.is-expanded > .json-children {
+  border-left-color: color-mix(in srgb, var(--accent), var(--line) 72%);
+}
+
+.json-more {
+  margin: 7px 0 7px 24px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 5px 9px;
+}
+
+@media (max-width: 700px) {
+  .markdown-document {
+    width: min(100% - 32px, 768px);
+    margin-top: 2.8rem;
+    font-size: 1rem;
+    line-height: 1.68;
+  }
+
+  .markdown-document h1 {
+    font-size: 2.1rem;
+  }
+
+  .markdown-document h2 {
+    font-size: 1.65rem;
+  }
+
+  .markdown-document h3 {
+    font-size: 1.3rem;
+  }
+
+  .json-tree {
+    width: calc(100% - 20px);
+    margin-top: 1rem;
+    font-size: 0.78rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}

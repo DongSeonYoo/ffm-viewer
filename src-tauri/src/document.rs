@@ -1,0 +1,232 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use serde::Serialize;
+use std::fs;
+use std::path::Path;
+
+const MAX_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DocumentKind {
+    Markdown,
+    Json,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentPayload {
+    pub path: String,
+    pub name: String,
+    pub kind: DocumentKind,
+    pub content: String,
+    pub base_dir: String,
+}
+
+fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
+
+    match extension.as_deref() {
+        Some("md" | "markdown") => Ok(DocumentKind::Markdown),
+        Some("json") => Ok(DocumentKind::Json),
+        _ => Err("Only Markdown and JSON documents are supported.".into()),
+    }
+}
+
+pub fn read_document_from_path(path: &Path) -> Result<DocumentPayload, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| "The selected document could not be found.".to_string())?;
+    let metadata = canonical
+        .metadata()
+        .map_err(|_| "The selected document could not be inspected.".to_string())?;
+    if !metadata.is_file() {
+        return Err("Select a Markdown or JSON file, not a directory.".into());
+    }
+    if metadata.len() > MAX_DOCUMENT_BYTES {
+        return Err("This document is larger than the 50 MB safety limit.".into());
+    }
+
+    let kind = classify_extension(&canonical)?;
+    let bytes =
+        fs::read(&canonical).map_err(|_| "The selected document could not be read.".to_string())?;
+    let content = String::from_utf8(bytes)
+        .map_err(|_| "This document is not valid UTF-8 text.".to_string())?
+        .trim_start_matches('\u{feff}')
+        .to_string();
+    let name = canonical
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "The selected document has an invalid file name.".to_string())?
+        .to_string();
+    let base_dir = canonical
+        .parent()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    Ok(DocumentPayload {
+        path: canonical.to_string_lossy().into_owned(),
+        name,
+        kind,
+        content,
+        base_dir,
+    })
+}
+
+#[tauri::command]
+pub fn read_document(path: String) -> Result<DocumentPayload, String> {
+    read_document_from_path(Path::new(&path))
+}
+
+fn image_mime(path: &Path) -> Result<&'static str, String> {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => Ok("image/png"),
+        Some("jpg" | "jpeg") => Ok("image/jpeg"),
+        Some("gif") => Ok("image/gif"),
+        Some("webp") => Ok("image/webp"),
+        Some("avif") => Ok("image/avif"),
+        _ => Err("This local image format is not supported.".into()),
+    }
+}
+
+fn read_local_image_data_url(document: &Path, source: &str) -> Result<String, String> {
+    let document = document
+        .canonicalize()
+        .map_err(|_| "The Markdown document could not be found.".to_string())?;
+    let base = document
+        .parent()
+        .ok_or_else(|| "The Markdown document folder is unavailable.".to_string())?
+        .canonicalize()
+        .map_err(|_| "The Markdown document folder is unavailable.".to_string())?;
+    let clean_source = source.split(['?', '#']).next().unwrap_or_default();
+    let source_path = Path::new(clean_source);
+    if source_path.is_absolute() {
+        return Err("Local images must stay inside the document folder.".into());
+    }
+
+    let candidate = base
+        .join(source_path)
+        .canonicalize()
+        .map_err(|_| "The local image could not be found.".to_string())?;
+    if !candidate.starts_with(&base) {
+        return Err("Local images must stay inside the document folder.".into());
+    }
+    let mime = image_mime(&candidate)?;
+    let metadata = candidate
+        .metadata()
+        .map_err(|_| "The local image could not be inspected.".to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
+        return Err("The local image is not a readable file under 10 MB.".into());
+    }
+    let bytes =
+        fs::read(candidate).map_err(|_| "The local image could not be read.".to_string())?;
+    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
+}
+
+#[tauri::command]
+pub fn read_local_image(document_path: String, source: String) -> Result<Option<String>, String> {
+    read_local_image_data_url(Path::new(&document_path), &source).map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file(name: &str, contents: &[u8]) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("dev-preview-test-{suffix}"));
+        fs::create_dir_all(&directory).expect("temp directory should be created");
+        let path = directory.join(name);
+        fs::write(&path, contents).expect("fixture should be written");
+        path
+    }
+
+    #[test]
+    fn reads_supported_markdown_documents() {
+        let path = temp_file("README.md", b"# Hello");
+        let payload = read_document_from_path(&path).expect("document should load");
+
+        assert_eq!(payload.kind, DocumentKind::Markdown);
+        assert_eq!(payload.name, "README.md");
+        assert_eq!(payload.content, "# Hello");
+    }
+
+    #[test]
+    fn reads_supported_json_documents() {
+        let path = temp_file("response.JSON", br#"{"ready":true}"#);
+        let payload = read_document_from_path(&path).expect("document should load");
+
+        assert_eq!(payload.kind, DocumentKind::Json);
+    }
+
+    #[test]
+    fn rejects_unsupported_extensions() {
+        let path = temp_file("notes.txt", b"hello");
+        let error = read_document_from_path(&path).expect_err("text files are out of scope");
+
+        assert!(error.contains("Markdown and JSON"));
+    }
+
+    #[test]
+    fn rejects_invalid_utf8_without_leaking_the_path() {
+        let path = temp_file("broken.md", &[0xff, 0xfe, 0xfd]);
+        let error = read_document_from_path(&path).expect_err("invalid UTF-8 should fail");
+
+        assert!(error.contains("UTF-8"));
+        assert!(!error.contains(path.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn reads_allowed_images_below_the_document_directory() {
+        let document = temp_file("README.md", b"![pixel](assets/pixel.png)");
+        let image = document.parent().expect("parent").join("assets/pixel.png");
+        fs::create_dir_all(image.parent().expect("image parent")).expect("asset directory");
+        fs::write(&image, [0x89, b'P', b'N', b'G']).expect("image fixture");
+
+        let data_url = read_local_image_data_url(&document, "assets/pixel.png")
+            .expect("local image should load");
+        assert!(data_url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn blocks_images_outside_the_document_directory() {
+        let document = temp_file("README.md", b"![secret](../secret.png)");
+        let secret = document
+            .parent()
+            .expect("parent")
+            .parent()
+            .expect("grandparent")
+            .join("secret.png");
+        fs::write(&secret, [0x89, b'P', b'N', b'G']).expect("secret fixture");
+
+        let error = read_local_image_data_url(&document, "../secret.png")
+            .expect_err("path traversal should be rejected");
+        assert!(error.contains("document folder"));
+    }
+
+    #[test]
+    fn blocks_active_svg_images() {
+        let document = temp_file("README.md", b"![vector](vector.svg)");
+        let image = document.parent().expect("parent").join("vector.svg");
+        fs::write(&image, b"<svg><script>alert(1)</script></svg>").expect("svg fixture");
+
+        let error = read_local_image_data_url(&document, "vector.svg")
+            .expect_err("SVG is outside the safe image allow-list");
+        assert!(error.contains("image format"));
+    }
+}

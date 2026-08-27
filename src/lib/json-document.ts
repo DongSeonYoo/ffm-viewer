@@ -27,32 +27,13 @@ export interface JsonChildPage {
   readonly nextOffset: number;
 }
 
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === 'boolean' ||
-    typeof value === 'number' ||
-    typeof value === 'string'
-  ) {
-    return true;
-  }
-
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
-  }
-
-  if (typeof value === 'object') {
-    return Object.values(value).every(isJsonValue);
-  }
-
-  return false;
-}
-
 function kindOf(value: JsonValue): JsonKind {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'object') return 'object';
-  return typeof value;
+  if (typeof value === 'string') return 'string';
+  if (typeof value === 'number') return 'number';
+  return 'boolean';
 }
 
 function createNode(
@@ -64,22 +45,18 @@ function createNode(
   const childCount = Array.isArray(value)
     ? value.length
     : kind === 'object'
-      ? Object.keys(value).length
+      ? Object.keys(value as Record<string, JsonValue>).length
       : 0;
 
   return { key, path, kind, value, childCount };
 }
 
 export function parseJsonDocument(source: string): JsonNode {
-  let value: unknown;
+  let value: JsonValue;
   try {
-    value = JSON.parse(source);
+    value = JSON.parse(source) as JsonValue;
   } catch {
     throw new Error('Invalid JSON. Check the document syntax and try again.');
-  }
-
-  if (!isJsonValue(value)) {
-    throw new Error('Invalid JSON. Unsupported value found.');
   }
 
   return createNode(value, '$');
@@ -122,4 +99,3 @@ export function getJsonChildren(
     nextOffset,
   };
 }
-

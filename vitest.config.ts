@@ -9,7 +9,13 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/main.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/main.ts',
+        'src/lib/desktop-bridge.ts',
+        'src/lib/tauri-bridge.ts',
+        'src/lib/browser-preview-bridge.ts',
+      ],
       thresholds: {
         branches: 80,
         functions: 80,

@@ -47,4 +47,13 @@ describe('JSON document model', () => {
   it('returns a useful parse error instead of throwing raw engine details', () => {
     expect(() => parseJsonDocument('{"broken": }')).toThrow(/Invalid JSON/);
   });
+
+  it('accepts deeply nested data without recursively walking the whole document', () => {
+    const depth = 4_000;
+    const source = `${'['.repeat(depth)}0${']'.repeat(depth)}`;
+
+    const root = parseJsonDocument(source);
+    expect(root.kind).toBe('array');
+    expect(root.childCount).toBe(1);
+  });
 });
