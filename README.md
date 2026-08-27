@@ -1,6 +1,6 @@
 # FFM Viewer
 
-Fast, focused local viewing for Markdown and JSON files.
+**Files, fast.**
 
 FFM Viewer is a lightweight Tauri desktop app that renders Markdown as a clean reading surface and JSON as a collapsible tree. Files stay on your machine.
 
