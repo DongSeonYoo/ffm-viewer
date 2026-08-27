@@ -255,6 +255,27 @@ describe('createApp', () => {
     ).toContain('readme.md');
   });
 
+  it('keeps the current document visible when another file cannot be opened', async () => {
+    const current = markdownDocument('# Keep reading');
+    const missingPath = '/tmp/missing.md';
+    const { bridge, requestOpen } = createBridge({ [current.path]: current });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(current.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Keep reading'));
+
+    requestOpen(missingPath);
+
+    await vi.waitFor(() => expect(bridge.readDocument).toHaveBeenCalledWith(missingPath));
+    await vi.waitFor(() => {
+      expect(document.querySelector('.watch-warning')?.textContent)
+        .toContain('File could not be opened.');
+    });
+    expect(document.querySelector('.markdown-document h1')?.textContent).toBe('Keep reading');
+    expect(document.querySelector('.error-state')).toBeNull();
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
+      .toContain('readme.md');
+  });
+
   it('wraps adjacent tab navigation and supports numbered file shortcuts', async () => {
     const first = markdownDocument('# First');
     const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
@@ -545,6 +566,53 @@ describe('createApp', () => {
     requestOpen(payload.path);
     await vi.waitFor(() => expect(document.body.textContent).toContain('Watched'));
     expect(order.slice(0, 2)).toEqual(['watch', 'read']);
+  });
+
+  it('reasserts watcher ownership when a slow open becomes the active tab', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const slow = { ...markdownDocument('# Slow'), path: '/tmp/slow.md', name: 'slow.md' };
+    const { bridge, requestOpen } = createBridge({
+      [first.path]: first,
+      [second.path]: second,
+      [slow.path]: slow,
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(first.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+    requestOpen(second.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
+
+    let releaseSlowWatch!: () => void;
+    const slowWatch = new Promise<void>((resolve) => {
+      releaseSlowWatch = resolve;
+    });
+    let heldSlowWatch = false;
+    vi.mocked(bridge.watchDocument).mockClear();
+    vi.mocked(bridge.watchDocument).mockImplementation(async (path) => {
+      if (path === slow.path && !heldSlowWatch) {
+        heldSlowWatch = true;
+        await slowWatch;
+      }
+    });
+
+    requestOpen(slow.path);
+    await vi.waitFor(() => expect(bridge.watchDocument).toHaveBeenCalledWith(
+      slow.path,
+      expect.any(Function),
+      expect.any(Function),
+    ));
+    document.querySelector<HTMLButtonElement>(`[data-open-file="${first.path}"]`)?.click();
+    await vi.waitFor(() => expect(vi.mocked(bridge.watchDocument).mock.calls.at(-1)?.[0])
+      .toBe(first.path));
+
+    releaseSlowWatch();
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Slow'));
+    await vi.waitFor(() => expect(vi.mocked(bridge.watchDocument).mock.calls.at(-1)?.[0])
+      .toBe(slow.path));
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
+      .toContain('slow.md');
   });
 
   it('keeps a readable document visible and retries after watcher setup fails', async () => {

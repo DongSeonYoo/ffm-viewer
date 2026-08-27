@@ -765,8 +765,21 @@ export async function createApp(
       renderChrome();
       renderActive();
       root.dataset.renderMs = (performance.now() - started).toFixed(2);
+      void installActiveWatcher(tab.payload.path).then((warningMessage) => {
+        if (activeId !== tab.id) return;
+        tab.warning = warningMessage;
+        renderWarning();
+      });
     } catch (error) {
-      renderError(error instanceof Error ? error.message : 'File could not be opened.');
+      const message = error instanceof Error ? error.message : 'File could not be opened.';
+      const current = activeTab();
+      if (!current) {
+        renderError(message);
+        return;
+      }
+      current.warning = message;
+      renderWarning();
+      if (current.source === 'file') void installActiveWatcher(current.payload.path);
     }
   }
 
