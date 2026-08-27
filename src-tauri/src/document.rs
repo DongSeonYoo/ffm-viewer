@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 const MAX_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
@@ -89,6 +90,40 @@ pub fn read_document_from_path(path: &Path) -> Result<DocumentPayload, String> {
 #[tauri::command]
 pub fn read_document(path: String) -> Result<DocumentPayload, String> {
     read_document_from_path(Path::new(&path))
+}
+
+fn write_document_to_path(path: &Path, content: &str) -> Result<(), String> {
+    if content.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err("This document is larger than the 50 MB safety limit.".into());
+    }
+    if classify_extension(path)? == DocumentKind::Image {
+        return Err("Scratch content can only be saved as a text document.".into());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "The save folder is unavailable.".to_string())?
+        .canonicalize()
+        .map_err(|_| "The save folder is unavailable.".to_string())?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| "Choose a valid file name.".to_string())?;
+    let target = parent.join(name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|_| "Choose a new file name. FFM will not overwrite an existing file.".to_string())?;
+    if file.write_all(content.as_bytes()).is_err() || file.sync_all().is_err() {
+        drop(file);
+        let _ = fs::remove_file(&target);
+        return Err("The document could not be saved.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn write_document(path: String, content: String) -> Result<(), String> {
+    write_document_to_path(Path::new(&path), &content)
 }
 
 fn image_mime(path: &Path, allow_svg: bool) -> Result<&'static str, String> {
@@ -234,6 +269,39 @@ mod tests {
         let error = read_document_from_path(&path).expect_err("executables are out of scope");
 
         assert!(error.contains("supported"));
+    }
+
+    #[test]
+    fn writes_scratch_text_to_a_supported_path() {
+        let seed = temp_file("seed.txt", b"");
+        let path = seed.parent().expect("temp directory").join("saved.md");
+
+        write_document_to_path(&path, "# Saved").expect("scratch should save");
+
+        assert_eq!(fs::read_to_string(&path).expect("saved contents"), "# Saved");
+    }
+
+    #[test]
+    fn refuses_to_overwrite_an_image_from_scratch() {
+        let seed = temp_file("seed.txt", b"");
+        let path = seed.parent().expect("temp directory").join("image.png");
+
+        let error = write_document_to_path(&path, "not an image")
+            .expect_err("scratch must not write image extensions");
+
+        assert!(error.contains("text"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn refuses_to_overwrite_an_existing_text_file() {
+        let path = temp_file("existing.md", b"original");
+
+        let error = write_document_to_path(&path, "replacement")
+            .expect_err("existing user files must stay untouched");
+
+        assert!(error.contains("not overwrite"));
+        assert_eq!(fs::read_to_string(path).expect("original remains"), "original");
     }
 
     #[test]

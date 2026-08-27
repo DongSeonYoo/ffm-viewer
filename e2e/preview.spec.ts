@@ -1,4 +1,16 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+async function pasteText(page: Page, value: string): Promise<void> {
+  await page.evaluate((text) => {
+    const clipboard = new DataTransfer();
+    clipboard.setData('text/plain', text);
+    window.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: clipboard,
+    }));
+  }, value);
+}
 
 test('Markdown opens as a focused article rather than an editor', async ({ page }) => {
   await page.goto('/?fixture=markdown');
@@ -108,6 +120,33 @@ test('images open inside the minimal image surface', async ({ page }) => {
   await expect(image).toBeVisible();
   await expect(page.locator('.document-tab .document-type')).toHaveText('IMG');
   expect(await image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
+});
+
+test('Scratch previews pasted Markdown and opens a new tab for the next paste', async ({ page }) => {
+  await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+n');
+  await expect(page.getByRole('heading', { name: 'Paste content to preview' })).toBeVisible();
+
+  await pasteText(page, '# Notion paste\n\n| key | value |\n| --- | --- |\n| speed | fast |');
+  await expect(page.getByRole('heading', { name: 'Notion paste' })).toBeVisible();
+  await expect(page.locator('.markdown-document table')).toContainText('fast');
+
+  await pasteText(page, '{"id":9223372036854775807}');
+  await expect(page.getByRole('tab')).toHaveCount(3);
+  await expect(page.locator('.json-code-view')).toBeVisible();
+  await expect(page.locator('.cm-content')).toContainText('9223372036854775807');
+});
+
+test('Scratch suggests YAML without switching until the user accepts', async ({ page }) => {
+  await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+n');
+  await pasteText(page, 'server:\n  port: 4000\n  host: localhost');
+
+  await expect(page.locator('[data-format-hint]')).toBeVisible();
+  await expect(page.locator('.markdown-document')).toBeVisible();
+  await page.locator('[data-view-as="yaml"]').click();
+  await expect(page.locator('.text-code-view')).toBeVisible();
+  await expect(page.locator('.document-tab.is-active .document-type')).toHaveText('YAML');
 });
 
 function contrastRatio(first: string, second: string): number {

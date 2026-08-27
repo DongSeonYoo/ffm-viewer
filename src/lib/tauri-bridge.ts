@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { open } from '@tauri-apps/plugin-dialog';
+import { message, open, save } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type {
   DesktopBridge,
+  DocumentKind,
   Dispose,
   DocumentPayload,
   PathHandler,
@@ -13,6 +14,17 @@ import type {
 interface PathEvent {
   path: string;
 }
+
+const SAVE_FORMATS: Record<Exclude<DocumentKind, 'image'>, {
+  readonly name: string;
+  readonly extension: string;
+}> = {
+  markdown: { name: 'Markdown', extension: 'md' },
+  json: { name: 'JSON', extension: 'json' },
+  text: { name: 'Plain text', extension: 'txt' },
+  yaml: { name: 'YAML', extension: 'yaml' },
+  toml: { name: 'TOML', extension: 'toml' },
+};
 
 function normalizeDispose(unlisten: UnlistenFn): Dispose {
   return () => unlisten();
@@ -103,6 +115,37 @@ export function createTauriBridge(): DesktopBridge {
 
     resolveLocalImage(documentPath, source) {
       return invoke<string | null>('read_local_image', { documentPath, source });
+    },
+
+    async confirmClose(name) {
+      const result = await message(`Save changes to ${name}?`, {
+        title: 'FFM Viewer',
+        kind: 'warning',
+        buttons: { yes: 'Save', no: 'Discard', cancel: 'Cancel' },
+      });
+      if (result === 'Save') return 'save';
+      if (result === 'Discard') return 'discard';
+      return 'cancel';
+    },
+
+    async saveDocument(baseName, kind, content) {
+      const format = SAVE_FORMATS[kind];
+      const path = await save({
+        defaultPath: `${baseName}.${format.extension}`,
+        filters: [{ name: format.name, extensions: [format.extension] }],
+      });
+      if (!path) return false;
+      await invoke<void>('write_document', { path, content });
+      return true;
+    },
+
+    async onCloseRequested(handler) {
+      const window = getCurrentWebviewWindow();
+      const unlisten = await window.onCloseRequested(async (event) => {
+        event.preventDefault();
+        if (await handler()) await window.destroy();
+      });
+      return normalizeDispose(unlisten);
     },
   };
 }

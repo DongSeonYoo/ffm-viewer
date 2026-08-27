@@ -3,11 +3,16 @@ import {
   createTextCodeView,
   type CodeViewElement,
 } from './components/json-tree';
-import type { DesktopBridge, DocumentPayload } from './lib/desktop-bridge';
+import type { DesktopBridge, DocumentKind, DocumentPayload } from './lib/desktop-bridge';
 import { formatJsonDocument } from './lib/json-document';
 import { renderMarkdown } from './lib/markdown';
+import {
+  isPastedDocumentTooLarge,
+  preparePastedDocument,
+} from './lib/pasted-document';
 
 let activeKeydownListener: ((event: KeyboardEvent) => void) | undefined;
+let activePasteListener: ((event: ClipboardEvent) => void) | undefined;
 const IMAGE_CONCURRENCY = 3;
 const MAX_IMAGE_DATA_CHARS = 24 * 1024 * 1024;
 const MAX_HISTORY = 100;
@@ -15,9 +20,12 @@ const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
 
 interface OpenTab {
   readonly id: string;
+  readonly source: 'file' | 'scratch';
   payload: DocumentPayload;
   scrollTop: number;
-  watchWarning?: string;
+  dirty: boolean;
+  hint?: 'yaml' | 'toml';
+  warning?: string;
 }
 
 function markImageUnavailable(image: HTMLImageElement): void {
@@ -165,6 +173,7 @@ export async function createApp(
   let renderSequence = 0;
   let readSequence = 0;
   let openQueue = Promise.resolve();
+  let untitledCounter = 0;
 
   const shell = document.createElement('div');
   shell.className = 'app-shell';
@@ -217,7 +226,11 @@ export async function createApp(
   warning.hidden = true;
   const viewport = document.createElement('main');
   viewport.className = 'document-viewport';
-  workArea.append(tablist, warning, viewport);
+  const formatHint = document.createElement('div');
+  formatHint.className = 'format-hint';
+  formatHint.dataset.formatHint = '';
+  formatHint.hidden = true;
+  workArea.append(tablist, warning, viewport, formatHint);
   layout.append(sidebar, workArea);
   shell.append(topbar, layout);
   root.replaceChildren(shell);
@@ -243,10 +256,39 @@ export async function createApp(
     forward.disabled = historyIndex < 0 || historyIndex >= history.length - 1;
   };
 
-  const renderWatchWarning = () => {
-    const message = activeTab()?.watchWarning;
+  const renderWarning = () => {
+    const message = activeTab()?.warning;
     warning.hidden = !message;
     warning.textContent = message ?? '';
+  };
+
+  const renderFormatHint = () => {
+    formatHint.replaceChildren();
+    const tab = activeTab();
+    const hint = tab?.hint;
+    if (!tab || tab.source !== 'scratch' || !hint) {
+      formatHint.hidden = true;
+      return;
+    }
+    const label = hint.toUpperCase();
+    const message = document.createElement('span');
+    message.textContent = `${label} 형식으로 보입니다`;
+    const apply = document.createElement('button');
+    apply.type = 'button';
+    apply.dataset.viewAs = hint;
+    apply.textContent = `${label}로 보기`;
+    apply.addEventListener('click', () => applyScratchKind(hint));
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'format-hint-dismiss';
+    dismiss.setAttribute('aria-label', 'Dismiss format suggestion');
+    dismiss.textContent = '×';
+    dismiss.addEventListener('click', () => {
+      tab.hint = undefined;
+      renderFormatHint();
+    });
+    formatHint.append(message, apply, dismiss);
+    formatHint.hidden = false;
   };
 
   const renderChrome = () => {
@@ -266,6 +308,12 @@ export async function createApp(
       fileName.className = 'open-file-name';
       fileName.textContent = tab.payload.name;
       fileButton.append(type.cloneNode(true), fileName);
+      if (tab.dirty) {
+        const dirty = document.createElement('span');
+        dirty.className = 'open-file-dirty';
+        dirty.title = 'Unsaved';
+        fileButton.append(dirty);
+      }
       fileButton.addEventListener('click', () => activateTab(tab.id));
       filesSection.content.append(fileButton);
 
@@ -342,7 +390,8 @@ export async function createApp(
     detail.textContent = message;
     state.append(title, detail, createOpenButton('Open another document', chooseDocuments));
     viewport.append(state);
-    renderWatchWarning();
+    renderWarning();
+    renderFormatHint();
   };
 
   const renderActive = () => {
@@ -355,24 +404,41 @@ export async function createApp(
     if (!tab) {
       shell.className = 'app-shell';
       viewport.append(createEmptyState(chooseDocuments));
-      renderWatchWarning();
+      renderWarning();
+      renderFormatHint();
       document.title = 'FFM Viewer';
       return;
     }
 
     const renderId = ++renderSequence;
     shell.className = `app-shell is-${tab.payload.kind}`;
+    if (tab.source === 'scratch' && !tab.payload.content) {
+      const state = document.createElement('section');
+      state.className = 'scratch-empty';
+      const title = document.createElement('h1');
+      title.textContent = 'Paste content to preview';
+      const detail = document.createElement('p');
+      detail.textContent = 'Markdown and JSON are detected automatically.';
+      state.append(title, detail);
+      viewport.append(state);
+      renderWarning();
+      renderFormatHint();
+      document.title = `${tab.payload.name} — FFM Viewer`;
+      return;
+    }
     if (tab.payload.kind === 'markdown') {
       const article = document.createElement('article');
       article.className = 'markdown-document';
       article.innerHTML = renderMarkdown(tab.payload.content);
       renderMarkdownOutline(article);
-      void hydrateLocalImages(
-        article,
-        tab.payload,
-        bridge,
-        () => renderId === renderSequence && activeId === tab.id,
-      );
+      if (tab.source === 'file') {
+        void hydrateLocalImages(
+          article,
+          tab.payload,
+          bridge,
+          () => renderId === renderSequence && activeId === tab.id,
+        );
+      }
       article.addEventListener('click', (event) => {
         const link = (event.target as Element).closest<HTMLAnchorElement>('a[href]');
         if (!link) return;
@@ -387,7 +453,11 @@ export async function createApp(
       });
     } else if (tab.payload.kind === 'json') {
       try {
-        activeCodeView = createJsonCodeView(formatJsonDocument(tab.payload.content));
+        activeCodeView = createJsonCodeView(
+          tab.source === 'scratch'
+            ? tab.payload.content
+            : formatJsonDocument(tab.payload.content),
+        );
         const jsonOutline = activeCodeView.querySelector<HTMLElement>('.json-outline');
         if (jsonOutline) {
           outlineSection.content.append(jsonOutline);
@@ -432,7 +502,8 @@ export async function createApp(
         if (scroller) scroller.scrollTop = tab.scrollTop;
       });
     }
-    renderWatchWarning();
+    renderWarning();
+    renderFormatHint();
     document.title = `${tab.payload.name} — FFM Viewer`;
   };
 
@@ -443,6 +514,67 @@ export async function createApp(
     if (history.length > MAX_HISTORY) history.shift();
     historyIndex = history.length - 1;
   };
+
+  function addScratchTab(): OpenTab {
+    snapshotScroll();
+    untitledCounter += 1;
+    const id = `scratch:${untitledCounter}`;
+    const tab: OpenTab = {
+      id,
+      source: 'scratch',
+      payload: {
+        path: id,
+        name: `Untitled ${untitledCounter}`,
+        kind: 'markdown',
+        content: '',
+      },
+      scrollTop: 0,
+      dirty: false,
+    };
+    tabs.push(tab);
+    activeId = id;
+    recordHistory(id);
+    return tab;
+  }
+
+  function openScratch(): void {
+    addScratchTab();
+    renderChrome();
+    renderActive();
+  }
+
+  function applyScratchKind(kind: 'markdown' | 'text' | 'yaml' | 'toml'): void {
+    const tab = activeTab();
+    if (!tab || tab.source !== 'scratch') return;
+    tab.payload = { ...tab.payload, kind };
+    tab.hint = undefined;
+    renderChrome();
+    renderActive();
+  }
+
+  function pasteIntoScratch(source: string): void {
+    let tab = activeTab();
+    if (!tab || tab.source !== 'scratch' || tab.dirty || tab.payload.content) {
+      tab = addScratchTab();
+    }
+    if (isPastedDocumentTooLarge(source)) {
+      tab.warning = 'Pasted content is larger than the 50 MB safety limit.';
+      renderChrome();
+      renderActive();
+      return;
+    }
+    const prepared = preparePastedDocument(source);
+    tab.payload = {
+      ...tab.payload,
+      kind: prepared.kind,
+      content: prepared.content,
+    };
+    tab.dirty = true;
+    tab.hint = prepared.hint;
+    tab.warning = undefined;
+    renderChrome();
+    renderActive();
+  }
 
   async function installActiveWatcher(path: string): Promise<string | undefined> {
     try {
@@ -455,8 +587,8 @@ export async function createApp(
         (failedPath) => {
           const failed = tabs.find((candidate) => candidate.payload.path === failedPath);
           if (!failed || failed.id !== activeId) return;
-          failed.watchWarning = WATCH_WARNING;
-          renderWatchWarning();
+          failed.warning = WATCH_WARNING;
+          renderWarning();
         },
       );
       return undefined;
@@ -471,7 +603,7 @@ export async function createApp(
     const path = tab.payload.path;
     const sequence = ++readSequence;
     if (installWatch) {
-      tab.watchWarning = await installActiveWatcher(path);
+      tab.warning = await installActiveWatcher(path);
     }
     try {
       const payload = await bridge.readDocument(path);
@@ -481,7 +613,7 @@ export async function createApp(
         || payload.content !== tab.payload.content;
       tab.payload = payload;
       if (!changed) {
-        renderWatchWarning();
+        renderWarning();
         return;
       }
       const started = performance.now();
@@ -495,7 +627,8 @@ export async function createApp(
   }
 
   function activateTab(id: string, addToHistory = true): void {
-    if (!tabs.some((tab) => tab.id === id)) return;
+    const tab = tabs.find((candidate) => candidate.id === id);
+    if (!tab) return;
     if (activeId === id) {
       if (addToHistory) recordHistory(id);
       updateHistoryButtons();
@@ -508,10 +641,10 @@ export async function createApp(
     renderChrome();
     renderActive();
     root.dataset.renderMs = (performance.now() - started).toFixed(2);
-    void refreshFileTab(id);
+    if (tab.source === 'file') void refreshFileTab(id);
   }
 
-  function closeTab(id: string): void {
+  function removeTab(id: string): void {
     const index = tabs.findIndex((tab) => tab.id === id);
     if (index < 0) return;
     const wasActive = id === activeId;
@@ -532,6 +665,58 @@ export async function createApp(
     if (wasActive) renderActive();
   }
 
+  async function saveScratch(tab: OpenTab): Promise<boolean> {
+    if (tab.payload.kind === 'image') return false;
+    const kind: Exclude<DocumentKind, 'image'> = tab.payload.kind;
+    try {
+      const saved = await bridge.saveDocument(
+        tab.payload.name,
+        kind,
+        tab.payload.content,
+      );
+      if (!saved) return false;
+      tab.dirty = false;
+      return true;
+    } catch (error) {
+      tab.warning = error instanceof Error
+        ? error.message
+        : 'The document could not be saved.';
+      if (tab.id === activeId) renderWarning();
+      return false;
+    }
+  }
+
+  async function canCloseTab(tab: OpenTab): Promise<boolean> {
+    if (!tab.dirty) return true;
+    const decision = await bridge.confirmClose(tab.payload.name);
+    if (decision === 'cancel') return false;
+    if (decision === 'save') return saveScratch(tab);
+    return true;
+  }
+
+  function closeTab(id: string): void {
+    const tab = tabs.find((candidate) => candidate.id === id);
+    if (!tab) return;
+    if (!tab.dirty) {
+      removeTab(id);
+      return;
+    }
+    void canCloseTab(tab).then((canClose) => {
+      if (canClose) removeTab(id);
+    });
+  }
+
+  async function canCloseWindow(): Promise<boolean> {
+    for (const tab of tabs) {
+      if (!tab.dirty) continue;
+      if (!(await canCloseTab(tab))) {
+        activateTab(tab.id);
+        return false;
+      }
+    }
+    return true;
+  }
+
   async function openDocument(path: string): Promise<void> {
     const direct = tabs.find((tab) => tab.payload.path === path);
     if (direct) {
@@ -539,20 +724,22 @@ export async function createApp(
       else activateTab(direct.id);
       return;
     }
-    const watchWarning = await installActiveWatcher(path);
+    const fileWarning = await installActiveWatcher(path);
     try {
       const payload = await bridge.readDocument(path);
       const existing = tabs.find((tab) => tab.payload.path === payload.path);
       if (existing) {
-        existing.watchWarning = watchWarning;
+        existing.warning = fileWarning;
         activateTab(existing.id);
         return;
       }
       const tab: OpenTab = {
         id: payload.path,
+        source: 'file',
         payload,
         scrollTop: 0,
-        watchWarning,
+        dirty: false,
+        warning: fileWarning,
       };
       tabs.push(tab);
       snapshotScroll();
@@ -594,7 +781,7 @@ export async function createApp(
     const input = document.createElement('input');
     input.className = 'quick-switcher-input';
     input.dataset.quickSwitchInput = '';
-    input.placeholder = 'Go to file…';
+    input.placeholder = 'Go to file or action…';
     const list = document.createElement('div');
     list.className = 'quick-switcher-list';
     const renderResults = () => {
@@ -618,14 +805,49 @@ export async function createApp(
         });
         list.append(item);
       }
+      const scratch = activeTab();
+      if (query && scratch?.source === 'scratch') {
+        const actions: Array<{ kind: 'markdown' | 'text' | 'yaml' | 'toml'; label: string }> = [
+          { kind: 'markdown', label: 'View as Markdown' },
+          { kind: 'text', label: 'View as Plain Text' },
+          { kind: 'yaml', label: 'View as YAML' },
+          { kind: 'toml', label: 'View as TOML' },
+        ];
+        for (const action of actions.filter(({ label }) => label.toLocaleLowerCase().includes(query))) {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = `quick-switcher-item${list.children.length === 0 ? ' is-active' : ''}`;
+          item.dataset.quickActionKind = action.kind;
+          const type = document.createElement('span');
+          type.className = 'document-type';
+          type.textContent = '→';
+          const name = document.createElement('span');
+          name.textContent = action.label;
+          item.append(type, name);
+          item.addEventListener('click', () => {
+            applyScratchKind(action.kind);
+            closeQuickSwitcher();
+          });
+          list.append(item);
+        }
+      }
     };
     input.addEventListener('input', renderResults);
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') closeQuickSwitcher();
       if (event.key === 'Enter') {
-        const first = list.querySelector<HTMLElement>('[data-quick-switch-id]');
+        const first = list.querySelector<HTMLElement>(
+          '[data-quick-switch-id], [data-quick-action-kind]',
+        );
         const id = first?.dataset.quickSwitchId;
+        const kind = first?.dataset.quickActionKind as
+          | 'markdown'
+          | 'text'
+          | 'yaml'
+          | 'toml'
+          | undefined;
         if (id) activateTab(id);
+        else if (kind) applyScratchKind(kind);
         closeQuickSwitcher();
       }
     });
@@ -657,6 +879,11 @@ export async function createApp(
   if (activeKeydownListener) window.removeEventListener('keydown', activeKeydownListener);
   activeKeydownListener = (event) => {
     const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'n') {
+      event.preventDefault();
+      openScratch();
+      return;
+    }
     if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'o') {
       event.preventDefault();
       void chooseDocuments();
@@ -688,14 +915,41 @@ export async function createApp(
       closeTab(activeId);
       return;
     }
-    if (event.key === 'Escape') closeQuickSwitcher();
+    if (event.key === 'Escape') {
+      if (root.querySelector('[data-quick-switcher]')) {
+        closeQuickSwitcher();
+        return;
+      }
+      const tab = activeTab();
+      if (tab?.hint) {
+        tab.hint = undefined;
+        renderFormatHint();
+      }
+    }
   };
   window.addEventListener('keydown', activeKeydownListener);
 
+  if (activePasteListener) window.removeEventListener('paste', activePasteListener);
+  activePasteListener = (event) => {
+    const target = event.target;
+    if (
+      target instanceof Element
+      && target.closest('input, textarea, [contenteditable="true"]')
+    ) return;
+    const source = event.clipboardData?.getData('text/plain');
+    if (!source) return;
+    event.preventDefault();
+    pasteIntoScratch(source);
+  };
+  window.addEventListener('paste', activePasteListener);
+
   renderChrome();
   renderActive();
-  await bridge.onOpenRequested((path) => void queueDocument(path));
-  await bridge.onFileDropped((path) => void queueDocument(path));
+  await Promise.all([
+    bridge.onOpenRequested((path) => void queueDocument(path)),
+    bridge.onFileDropped((path) => void queueDocument(path)),
+    bridge.onCloseRequested(canCloseWindow),
+  ]);
   const pendingPaths = await bridge.takePendingOpen();
   for (const path of pendingPaths) await queueDocument(path);
 }

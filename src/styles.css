@@ -296,6 +296,15 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.open-file-dirty {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .open-file-name,
 .outline-item {
   font-size: 0.76rem;
@@ -313,11 +322,70 @@ a:focus-visible {
 }
 
 .work-area {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
   grid-template-rows: 39px auto minmax(0, 1fr);
   background: var(--page);
+}
+
+.scratch-empty {
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  justify-items: center;
+  padding: 40px;
+  text-align: center;
+}
+
+.scratch-empty h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.025em;
+}
+
+.scratch-empty p {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.format-hint {
+  position: absolute;
+  z-index: 20;
+  top: 51px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface), transparent 4%);
+  box-shadow: 0 10px 30px #0003;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  padding: 6px 7px 6px 10px;
+}
+
+.format-hint[hidden] {
+  display: none;
+}
+
+.format-hint button {
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 7px;
+}
+
+.format-hint .format-hint-dismiss {
+  width: 22px;
+  background: transparent;
+  color: var(--ink-soft);
+  padding: 4px;
 }
 
 .document-tabs {

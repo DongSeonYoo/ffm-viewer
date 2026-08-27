@@ -9,6 +9,7 @@ export interface DocumentPayload {
 
 export type Dispose = () => void;
 export type PathHandler = (path: string) => void;
+export type CloseDecision = 'save' | 'discard' | 'cancel';
 
 export interface DesktopBridge {
   chooseDocuments(): Promise<readonly string[]>;
@@ -23,4 +24,11 @@ export interface DesktopBridge {
   onFileDropped(handler: PathHandler): Promise<Dispose>;
   openExternal(url: string): Promise<void>;
   resolveLocalImage(documentPath: string, source: string): Promise<string | null>;
+  confirmClose(name: string): Promise<CloseDecision>;
+  saveDocument(
+    baseName: string,
+    kind: Exclude<DocumentKind, 'image'>,
+    content: string,
+  ): Promise<boolean>;
+  onCloseRequested(handler: () => Promise<boolean>): Promise<Dispose>;
 }

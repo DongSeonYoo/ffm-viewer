@@ -37,10 +37,19 @@ function imageDocument(name = 'pixel.png'): DocumentPayload {
   };
 }
 
+function pasteText(value: string): void {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { getData: (type: string) => type === 'text/plain' ? value : '' },
+  });
+  window.dispatchEvent(event);
+}
+
 function createBridge(documents: Record<string, DocumentPayload> = {}) {
   let openHandler: ((path: string) => void) | undefined;
   let changeHandler: ((path: string) => void) | undefined;
   let watchErrorHandler: ((path: string) => void) | undefined;
+  let closeHandler: (() => Promise<boolean>) | undefined;
 
   const bridge: DesktopBridge = {
     chooseDocuments: vi.fn().mockResolvedValue([]),
@@ -61,6 +70,12 @@ function createBridge(documents: Record<string, DocumentPayload> = {}) {
     onFileDropped: vi.fn(async () => () => undefined),
     openExternal: vi.fn().mockResolvedValue(undefined),
     resolveLocalImage: vi.fn().mockResolvedValue(null),
+    confirmClose: vi.fn().mockResolvedValue('discard'),
+    saveDocument: vi.fn().mockResolvedValue(false),
+    onCloseRequested: vi.fn(async (handler) => {
+      closeHandler = handler;
+      return () => undefined;
+    }),
   };
 
   return {
@@ -68,6 +83,7 @@ function createBridge(documents: Record<string, DocumentPayload> = {}) {
     requestOpen: (path: string) => openHandler?.(path),
     notifyChange: (path: string) => changeHandler?.(path),
     notifyWatchError: (path: string) => watchErrorHandler?.(path),
+    requestClose: async () => closeHandler?.() ?? true,
   };
 }
 
@@ -348,6 +364,119 @@ describe('createApp', () => {
 
     await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
     expect(document.querySelector('[data-quick-switcher]')).toBeNull();
+  });
+
+  it('creates a Scratch tab with Cmd+N and previews pasted Markdown', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+    expect(document.body.textContent).toContain('Paste content to preview');
+    pasteText('# Pasted document');
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('.markdown-document h1')?.textContent).toBe('Pasted document');
+    });
+    expect(document.querySelector('[role="tab"]')?.textContent).toContain('Untitled 1');
+    expect(document.querySelector('.open-file-dirty')).not.toBeNull();
+  });
+
+  it('opens a second Scratch tab instead of replacing pasted content', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+    pasteText('# First paste');
+    pasteText('# Second paste');
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second paste'));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
+      .toContain('Untitled 2');
+  });
+
+  it('detects pasted JSON once and renders the formatted JSON viewer', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+
+    pasteText('  {"id":9223372036854775807}');
+
+    await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
+    expect(document.querySelector('.cm-content')?.textContent).toContain('9223372036854775807');
+    expect(document.querySelector('.document-tab .document-type')?.textContent).toBe('JSON');
+  });
+
+  it('offers a nonblocking YAML hint and switches only after confirmation', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+
+    pasteText('server:\n  port: 4000\n  host: localhost');
+
+    await vi.waitFor(() => expect(document.querySelector('[data-format-hint]')).not.toBeNull());
+    expect(document.querySelector('.markdown-document')).not.toBeNull();
+    document.querySelector<HTMLButtonElement>('[data-view-as="yaml"]')?.click();
+    expect(document.querySelector('.text-code-view')?.textContent).toContain('port: 4000');
+    expect(document.querySelector('.document-tab .document-type')?.textContent).toBe('YAML');
+  });
+
+  it('switches Scratch format through Cmd+K actions', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+    pasteText('[server]\nport = 4000');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-quick-switch-input]')!;
+    input.value = 'toml';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(document.querySelector('.text-code-view')?.textContent).toContain('port = 4000');
+    expect(document.querySelector('.document-tab .document-type')?.textContent).toBe('TOML');
+  });
+
+  it('keeps dirty Scratch content open when close is cancelled', async () => {
+    const { bridge } = createBridge();
+    vi.mocked(bridge.confirmClose).mockResolvedValue('cancel');
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+    pasteText('# Keep me');
+
+    document.querySelector<HTMLButtonElement>('[aria-label="Close Untitled 1"]')?.click();
+
+    await vi.waitFor(() => expect(bridge.confirmClose).toHaveBeenCalledWith('Untitled 1'));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(document.body.textContent).toContain('Keep me');
+  });
+
+  it('saves a dirty Scratch document before closing it', async () => {
+    const { bridge } = createBridge();
+    vi.mocked(bridge.confirmClose).mockResolvedValue('save');
+    vi.mocked(bridge.saveDocument).mockResolvedValue(true);
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+    pasteText('# Save me');
+
+    document.querySelector<HTMLButtonElement>('[aria-label="Close Untitled 1"]')?.click();
+
+    await vi.waitFor(() => expect(bridge.saveDocument).toHaveBeenCalledWith(
+      'Untitled 1',
+      'markdown',
+      '# Save me',
+    ));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+  });
+
+  it('cancels application close when any dirty Scratch refuses to close', async () => {
+    const { bridge, requestClose } = createBridge();
+    vi.mocked(bridge.confirmClose).mockResolvedValue('cancel');
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }));
+    pasteText('# Unsaved');
+
+    await expect(requestClose()).resolves.toBe(false);
+    expect(document.body.textContent).toContain('Unsaved');
   });
 
   it('shows a recoverable error for malformed JSON', async () => {

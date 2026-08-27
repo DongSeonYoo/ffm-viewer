@@ -117,5 +117,8 @@ export function createBrowserPreviewBridge(
     onFileDropped: async () => () => undefined,
     openExternal: async () => undefined,
     resolveLocalImage: async () => null,
+    confirmClose: async () => 'discard',
+    saveDocument: async () => false,
+    onCloseRequested: async () => () => undefined,
   };
 }

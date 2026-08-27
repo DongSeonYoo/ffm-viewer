@@ -25,6 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             document::read_document,
+            document::write_document,
             document::read_local_image,
             open_requests::take_pending_open,
             watch::watch_document,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import html from '../../index.html?raw';
+import capabilities from '../../src-tauri/capabilities/default.json';
 import tauriConfig from '../../src-tauri/tauri.conf.json';
 
 describe('desktop CSP', () => {
@@ -25,5 +26,15 @@ describe('desktop CSP', () => {
       'md', 'markdown', 'json', 'txt', 'yaml', 'yml', 'toml',
       'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
     ]));
+  });
+
+  it('grants only the native dialog permissions Scratch needs', () => {
+    expect(capabilities.permissions).toEqual([
+      'core:default',
+      'dialog:allow-open',
+      'dialog:allow-save',
+      'dialog:allow-message',
+      'opener:allow-open-url',
+    ]);
   });
 });
