@@ -138,14 +138,21 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
     fn temp_file(name: &str, contents: &[u8]) -> PathBuf {
-        let suffix = SystemTime::now()
+        let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be valid")
             .as_nanos();
-        let directory = std::env::temp_dir().join(format!("ffm-viewer-test-{suffix}"));
+        let sequence = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "ffm-viewer-test-{}-{timestamp}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir_all(&directory).expect("temp directory should be created");
         let path = directory.join(name);
         fs::write(&path, contents).expect("fixture should be written");
