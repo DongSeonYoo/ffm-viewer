@@ -4,6 +4,7 @@ dist/
 coverage/
 test-results/
 playwright-report/
+FFM_dev.dmg
 src-tauri/target/
 src-tauri/gen/
 .DS_Store

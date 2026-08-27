@@ -48,13 +48,19 @@ Build a release bundle:
 pnpm build
 ```
 
+Build the latest local test image. This replaces `FFM_dev.dmg` in the project root:
+
+```bash
+pnpm build:dev-dmg
+```
+
 ## Publish a release
 
 Set the app version in `src-tauri/tauri.conf.json`, then push a matching tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 The release workflow tests the project, builds the Apple Silicon app on GitHub's macOS runner, verifies its ad-hoc signature, and publishes the ZIP plus its SHA-256 checksum. `install.sh` always installs the latest published release.

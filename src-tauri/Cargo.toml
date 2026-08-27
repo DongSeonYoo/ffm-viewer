@@ -1,6 +1,6 @@
 [package]
 name = "ffm-viewer"
-version = "0.1.0"
+version = "0.1.1"
 description = "A fast local viewer for Markdown and JSON documents"
 authors = ["FFM Viewer contributors"]
 edition = "2021"

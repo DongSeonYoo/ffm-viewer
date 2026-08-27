@@ -1,0 +1,19 @@
+{
+  "productName": "FFM_dev",
+  "identifier": "io.github.dongseonyoo.ffm-viewer.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "FFM_dev",
+        "width": 1040,
+        "height": 760,
+        "minWidth": 540,
+        "minHeight": 420,
+        "resizable": true,
+        "fullscreen": false,
+        "dragDropEnabled": true
+      }
+    ]
+  }
+}

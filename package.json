@@ -1,12 +1,13 @@
 {
   "name": "ffm-viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build:web": "tsc --noEmit && vite build",
     "build": "pnpm build:web && tauri build",
+    "build:dev-dmg": "sh scripts/build-dev-dmg.sh",
     "test": "vitest run",
     "test:install": "sh tests/install.sh",
     "test:coverage": "vitest run --coverage",
