@@ -16,4 +16,14 @@ describe('desktop CSP', () => {
       true,
     );
   });
+
+  it('registers every supported document and image extension as a viewer', () => {
+    const extensions = tauriConfig.bundle.fileAssociations
+      .flatMap((association) => association.ext);
+
+    expect(new Set(extensions)).toEqual(new Set([
+      'md', 'markdown', 'json', 'txt', 'yaml', 'yml', 'toml',
+      'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+    ]));
+  });
 });

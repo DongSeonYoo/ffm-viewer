@@ -40,14 +40,46 @@ const LARGE_JSON_FIXTURE: DocumentPayload = {
   ),
 };
 
+const TEXT_FIXTURE: DocumentPayload = {
+  path: '/fixtures/notes.txt',
+  name: 'notes.txt',
+  kind: 'text',
+  content: 'Plain text stays plain.\nLine two stays visible.',
+};
+
+const YAML_FIXTURE: DocumentPayload = {
+  path: '/fixtures/config.yaml',
+  name: 'config.yaml',
+  kind: 'yaml',
+  content: 'server:\n  port: 4000',
+};
+
+const TOML_FIXTURE: DocumentPayload = {
+  path: '/fixtures/config.toml',
+  name: 'config.toml',
+  kind: 'toml',
+  content: '[server]\nport = 4000',
+};
+
+const IMAGE_FIXTURE: DocumentPayload = {
+  path: '/fixtures/pixel.png',
+  name: 'pixel.png',
+  kind: 'image',
+  content: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+};
+
 const SINGLE_FIXTURES = {
   markdown: MARKDOWN_FIXTURE,
   json: JSON_FIXTURE,
   'json-large': LARGE_JSON_FIXTURE,
+  text: TEXT_FIXTURE,
+  yaml: YAML_FIXTURE,
+  toml: TOML_FIXTURE,
+  image: IMAGE_FIXTURE,
 } as const;
 
 export function createBrowserPreviewBridge(
-  fixture: 'markdown' | 'json' | 'json-large' | 'multi',
+  fixture: keyof typeof SINGLE_FIXTURES | 'multi',
 ): DesktopBridge {
   const payloads = fixture === 'multi'
     ? [
@@ -65,7 +97,10 @@ export function createBrowserPreviewBridge(
   let nextChoice = fixture === 'multi' ? 1 : 0;
 
   return {
-    chooseDocument: async () => payloads[Math.min(nextChoice++, payloads.length - 1)]?.path ?? null,
+    chooseDocuments: async () => {
+      const path = payloads[Math.min(nextChoice++, payloads.length - 1)]?.path;
+      return path ? [path] : [];
+    },
     readDocument: async (path) => {
       const payload = payloads.find((candidate) => candidate.path === path);
       if (!payload) throw new Error('Fixture not found.');
@@ -73,9 +108,10 @@ export function createBrowserPreviewBridge(
     },
     watchDocument: async () => undefined,
     takePendingOpen: async () => {
-      if (!pending) return null;
+      if (!pending) return [];
       pending = false;
-      return payloads[0]?.path ?? null;
+      const path = payloads[0]?.path;
+      return path ? [path] : [];
     },
     onOpenRequested: async () => () => undefined,
     onFileDropped: async () => () => undefined,

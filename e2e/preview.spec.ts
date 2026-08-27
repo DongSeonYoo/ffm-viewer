@@ -86,6 +86,30 @@ test('multiple files stay open and keyboard navigation wraps', async ({ page }) 
   await expect(page.locator('.json-code-view')).toBeVisible();
 });
 
+for (const [fixture, label, content] of [
+  ['text', 'TXT', 'Line two stays visible.'],
+  ['yaml', 'YAML', 'port: 4000'],
+  ['toml', 'TOML', 'port = 4000'],
+] as const) {
+  test(`${label} opens as read-only code`, async ({ page }) => {
+    await page.goto(`/?fixture=${fixture}`);
+
+    await expect(page.locator('.text-code-view')).toBeVisible();
+    await expect(page.locator('.cm-content')).toContainText(content);
+    await expect(page.locator('.document-tab .document-type')).toHaveText(label);
+    await expect(page.locator('[data-section-count="outline"]')).toHaveText('0');
+  });
+}
+
+test('images open inside the minimal image surface', async ({ page }) => {
+  await page.goto('/?fixture=image');
+
+  const image = page.locator('.image-document img');
+  await expect(image).toBeVisible();
+  await expect(page.locator('.document-tab .document-type')).toHaveText('IMG');
+  expect(await image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
+});
+
 function contrastRatio(first: string, second: string): number {
   const luminance = (color: string) => {
     const channels = color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];

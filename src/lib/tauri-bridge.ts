@@ -27,18 +27,22 @@ export function createTauriBridge(): DesktopBridge {
   let changeTimer: number | undefined;
 
   return {
-    async chooseDocument() {
+    async chooseDocuments() {
       const selected = await open({
-        multiple: false,
+        multiple: true,
         directory: false,
         filters: [
           {
             name: 'Developer documents',
-            extensions: ['md', 'markdown', 'json'],
+            extensions: [
+              'md', 'markdown', 'json', 'txt', 'yaml', 'yml', 'toml',
+              'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+            ],
           },
         ],
       });
-      return typeof selected === 'string' ? selected : null;
+      if (Array.isArray(selected)) return selected;
+      return typeof selected === 'string' ? [selected] : [];
     },
 
     readDocument(path) {
@@ -70,7 +74,7 @@ export function createTauriBridge(): DesktopBridge {
     },
 
     takePendingOpen() {
-      return invoke<string | null>('take_pending_open');
+      return invoke<string[]>('take_pending_open');
     },
 
     async onOpenRequested(handler) {
@@ -83,8 +87,7 @@ export function createTauriBridge(): DesktopBridge {
     async onFileDropped(handler) {
       const unlisten = await getCurrentWebviewWindow().onDragDropEvent((event) => {
         if (event.payload.type === 'drop') {
-          const firstPath = event.payload.paths[0];
-          if (firstPath) handler(firstPath);
+          event.payload.paths.forEach(handler);
         }
       });
       return normalizeDispose(unlisten);

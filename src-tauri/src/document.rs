@@ -12,6 +12,10 @@ const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 pub enum DocumentKind {
     Markdown,
     Json,
+    Text,
+    Yaml,
+    Toml,
+    Image,
 }
 
 #[derive(Debug, Serialize)]
@@ -23,7 +27,7 @@ pub struct DocumentPayload {
     pub content: String,
 }
 
-fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
+pub fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -32,7 +36,13 @@ fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
     match extension.as_deref() {
         Some("md" | "markdown") => Ok(DocumentKind::Markdown),
         Some("json") => Ok(DocumentKind::Json),
-        _ => Err("Only Markdown and JSON documents are supported.".into()),
+        Some("txt") => Ok(DocumentKind::Text),
+        Some("yaml" | "yml") => Ok(DocumentKind::Yaml),
+        Some("toml") => Ok(DocumentKind::Toml),
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "svg") => {
+            Ok(DocumentKind::Image)
+        }
+        _ => Err("This file type is not supported.".into()),
     }
 }
 
@@ -53,10 +63,16 @@ pub fn read_document_from_path(path: &Path) -> Result<DocumentPayload, String> {
     let kind = classify_extension(&canonical)?;
     let bytes =
         fs::read(&canonical).map_err(|_| "The selected document could not be read.".to_string())?;
-    let content = String::from_utf8(bytes)
-        .map_err(|_| "This document is not valid UTF-8 text.".to_string())?
-        .trim_start_matches('\u{feff}')
-        .to_string();
+    let content = if kind == DocumentKind::Image {
+        // ponytail: data URLs keep image delivery CSP-safe; use the asset protocol only if large-image profiling proves copies costly.
+        let mime = image_mime(&canonical, true)?;
+        format!("data:{mime};base64,{}", BASE64.encode(bytes))
+    } else {
+        String::from_utf8(bytes)
+            .map_err(|_| "This document is not valid UTF-8 text.".to_string())?
+            .trim_start_matches('\u{feff}')
+            .to_string()
+    };
     let name = canonical
         .file_name()
         .and_then(|value| value.to_str())
@@ -75,7 +91,7 @@ pub fn read_document(path: String) -> Result<DocumentPayload, String> {
     read_document_from_path(Path::new(&path))
 }
 
-fn image_mime(path: &Path) -> Result<&'static str, String> {
+fn image_mime(path: &Path, allow_svg: bool) -> Result<&'static str, String> {
     match path
         .extension()
         .and_then(|value| value.to_str())
@@ -87,6 +103,7 @@ fn image_mime(path: &Path) -> Result<&'static str, String> {
         Some("gif") => Ok("image/gif"),
         Some("webp") => Ok("image/webp"),
         Some("avif") => Ok("image/avif"),
+        Some("svg") if allow_svg => Ok("image/svg+xml"),
         _ => Err("This local image format is not supported.".into()),
     }
 }
@@ -116,7 +133,7 @@ fn read_local_image_data_url(document: &Path, source: &str) -> Result<String, St
     if !candidate.starts_with(&base) {
         return Err("Local images must stay inside the document folder.".into());
     }
-    let mime = image_mime(&candidate)?;
+    let mime = image_mime(&candidate, false)?;
     let metadata = candidate
         .metadata()
         .map_err(|_| "The local image could not be inspected.".to_string())?;
@@ -178,11 +195,45 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_extensions() {
-        let path = temp_file("notes.txt", b"hello");
-        let error = read_document_from_path(&path).expect_err("text files are out of scope");
+    fn reads_plain_text_and_config_documents() {
+        for (name, kind) in [
+            ("notes.txt", DocumentKind::Text),
+            ("config.yaml", DocumentKind::Yaml),
+            ("config.YML", DocumentKind::Yaml),
+            ("config.toml", DocumentKind::Toml),
+        ] {
+            let path = temp_file(name, b"key = value");
+            let payload = read_document_from_path(&path).expect("text document should load");
+            assert_eq!(payload.kind, kind);
+            assert_eq!(payload.content, "key = value");
+        }
+    }
 
-        assert!(error.contains("Markdown and JSON"));
+    #[test]
+    fn reads_image_documents_as_inert_data_urls() {
+        for (name, mime, bytes) in [
+            ("pixel.png", "image/png", &b"png"[..]),
+            ("photo.jpeg", "image/jpeg", &b"jpeg"[..]),
+            (
+                "vector.svg",
+                "image/svg+xml",
+                &b"<svg><script>alert(1)</script></svg>"[..],
+            ),
+        ] {
+            let path = temp_file(name, bytes);
+            let payload = read_document_from_path(&path).expect("image document should load");
+            assert_eq!(payload.kind, DocumentKind::Image);
+            assert!(payload.content.starts_with(&format!("data:{mime};base64,")));
+            assert!(!payload.content.contains("<script"));
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_extensions() {
+        let path = temp_file("notes.exe", b"hello");
+        let error = read_document_from_path(&path).expect_err("executables are out of scope");
+
+        assert!(error.contains("supported"));
     }
 
     #[test]

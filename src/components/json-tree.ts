@@ -7,7 +7,7 @@ import {
   syntaxTree,
 } from '@codemirror/language';
 import { search, searchKeymap } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
   highlightActiveLine,
@@ -44,9 +44,11 @@ interface OutlinePage {
   readonly nextOffset: number;
 }
 
-export interface JsonCodeViewElement extends HTMLElement {
+export interface CodeViewElement extends HTMLElement {
   destroy(): void;
 }
+
+export type JsonCodeViewElement = CodeViewElement;
 
 const jsonHighlightStyle = HighlightStyle.define([
   { tag: tags.propertyName, color: 'var(--json-key)' },
@@ -372,6 +374,37 @@ function createOutline(
   return outline;
 }
 
+function commonEditorExtensions(
+  cspNonce: string | undefined,
+  recordDiagnostics: (reason: string) => void,
+): Extension[] {
+  return [
+    EditorState.readOnly.of(true),
+    ...(cspNonce ? [EditorView.cspNonce.of(cspNonce)] : []),
+    EditorView.contentAttributes.of({ 'aria-readonly': 'true' }),
+    lineNumbers(),
+    highlightActiveLine(),
+    highlightActiveLineGutter(),
+    search({ top: true }),
+    keymap.of(searchKeymap),
+    ...(DIAGNOSTICS_ENABLED
+      ? [EditorView.updateListener.of((update) => {
+          const reasons = [
+            update.geometryChanged ? 'geometry' : '',
+            update.viewportChanged ? 'viewport' : '',
+            update.selectionSet ? 'selection' : '',
+          ].filter(Boolean);
+          if (reasons.length > 0) recordDiagnostics(`view-update:${reasons.join(',')}`);
+        })]
+      : []),
+    EditorView.theme({
+      '&': { height: '100%' },
+      '.cm-scroller': { overflow: 'auto' },
+      '.cm-content': { caretColor: 'transparent' },
+    }),
+  ];
+}
+
 export function createJsonCodeView(source: string): JsonCodeViewElement {
   const wrapper = document.createElement('section') as JsonCodeViewElement;
   wrapper.className = 'json-code-view';
@@ -385,31 +418,10 @@ export function createJsonCodeView(source: string): JsonCodeViewElement {
     doc: source,
     extensions: [
       json(),
-      EditorState.readOnly.of(true),
-      ...(cspNonce ? [EditorView.cspNonce.of(cspNonce)] : []),
-      EditorView.contentAttributes.of({ 'aria-readonly': 'true' }),
-      lineNumbers(),
+      ...commonEditorExtensions(cspNonce, (reason) => recordDiagnostics(reason)),
       foldGutter(),
-      highlightActiveLine(),
-      highlightActiveLineGutter(),
-      search({ top: true }),
-      keymap.of([...searchKeymap, ...foldKeymap]),
+      keymap.of(foldKeymap),
       syntaxHighlighting(jsonHighlightStyle),
-      ...(DIAGNOSTICS_ENABLED
-        ? [EditorView.updateListener.of((update) => {
-            const reasons = [
-              update.geometryChanged ? 'geometry' : '',
-              update.viewportChanged ? 'viewport' : '',
-              update.selectionSet ? 'selection' : '',
-            ].filter(Boolean);
-            if (reasons.length > 0) recordDiagnostics(`view-update:${reasons.join(',')}`);
-          })]
-        : []),
-      EditorView.theme({
-        '&': { height: '100%' },
-        '.cm-scroller': { overflow: 'auto' },
-        '.cm-content': { caretColor: 'transparent' },
-      }),
     ],
   });
   const view = new EditorView({ state, parent: code });
@@ -418,6 +430,33 @@ export function createJsonCodeView(source: string): JsonCodeViewElement {
   // ponytail: full parse gives the outline stable offsets; revisit only if profiling says it matters.
   const outlineTree = jsonLanguage.parser.parse(source);
   wrapper.append(createOutline(view, source, outlineTree.topNode), code);
+  if (DIAGNOSTICS_ENABLED) {
+    const diagnostics = attachDiagnostics(wrapper, code, view, source);
+    recordDiagnostics = diagnostics.record;
+    destroyDiagnostics = diagnostics.destroy;
+    recordDiagnostics('attached-panel');
+  }
+  wrapper.destroy = () => {
+    destroyDiagnostics();
+    view.destroy();
+  };
+  return wrapper;
+}
+
+export function createTextCodeView(source: string): CodeViewElement {
+  const wrapper = document.createElement('section') as CodeViewElement;
+  wrapper.className = 'text-code-view';
+  const code = document.createElement('div');
+  code.className = 'json-code-editor text-code-editor';
+  const cspNonce = document.querySelector<HTMLStyleElement>('#ffm-csp-nonce-source')?.nonce;
+  let recordDiagnostics: (reason: string) => void = () => undefined;
+  const state = EditorState.create({
+    doc: source,
+    extensions: commonEditorExtensions(cspNonce, (reason) => recordDiagnostics(reason)),
+  });
+  const view = new EditorView({ state, parent: code });
+  let destroyDiagnostics: () => void = () => undefined;
+  wrapper.append(code);
   if (DIAGNOSTICS_ENABLED) {
     const diagnostics = attachDiagnostics(wrapper, code, view, source);
     recordDiagnostics = diagnostics.record;

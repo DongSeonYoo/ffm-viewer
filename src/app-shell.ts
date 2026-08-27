@@ -1,4 +1,8 @@
-import { createJsonCodeView, type JsonCodeViewElement } from './components/json-tree';
+import {
+  createJsonCodeView,
+  createTextCodeView,
+  type CodeViewElement,
+} from './components/json-tree';
 import type { DesktopBridge, DocumentPayload } from './lib/desktop-bridge';
 import { formatJsonDocument } from './lib/json-document';
 import { renderMarkdown } from './lib/markdown';
@@ -102,13 +106,20 @@ function createEmptyState(onOpen: () => Promise<void>): HTMLElement {
   const title = document.createElement('h1');
   title.textContent = 'Read the file, not the syntax.';
   const description = document.createElement('p');
-  description.textContent = 'Open or drop a Markdown or JSON document.';
+  description.textContent = 'Open or drop a supported local file.';
   state.append(mark, title, description, createOpenButton('Open document', onOpen));
   return state;
 }
 
 function kindLabel(payload: DocumentPayload): string {
-  return payload.kind === 'markdown' ? 'MD' : 'JSON';
+  switch (payload.kind) {
+    case 'markdown': return 'MD';
+    case 'json': return 'JSON';
+    case 'text': return 'TXT';
+    case 'yaml': return 'YAML';
+    case 'toml': return 'TOML';
+    case 'image': return 'IMG';
+  }
 }
 
 function createSidebarSection(name: string, countName: string) {
@@ -149,7 +160,7 @@ export async function createApp(
   const history: string[] = [];
   let historyIndex = -1;
   let activeId: string | undefined;
-  let activeJsonView: JsonCodeViewElement | undefined;
+  let activeCodeView: CodeViewElement | undefined;
   let outlineObserver: MutationObserver | undefined;
   let renderSequence = 0;
   let readSequence = 0;
@@ -216,15 +227,15 @@ export async function createApp(
   const snapshotScroll = () => {
     const tab = activeTab();
     if (!tab) return;
-    const scroller = activeJsonView?.querySelector<HTMLElement>('.cm-scroller');
+    const scroller = activeCodeView?.querySelector<HTMLElement>('.cm-scroller');
     tab.scrollTop = scroller?.scrollTop ?? viewport.scrollTop;
   };
 
   const destroyActiveView = () => {
     outlineObserver?.disconnect();
     outlineObserver = undefined;
-    activeJsonView?.destroy();
-    activeJsonView = undefined;
+    activeCodeView?.destroy();
+    activeCodeView = undefined;
   };
 
   const updateHistoryButtons = () => {
@@ -289,7 +300,7 @@ export async function createApp(
     add.className = 'new-tab-button';
     add.setAttribute('aria-label', 'Open another document');
     add.textContent = '+';
-    add.addEventListener('click', () => void chooseDocument());
+    add.addEventListener('click', () => void chooseDocuments());
     tablist.append(add);
     filesSection.count.textContent = String(tabs.length);
     updateHistoryButtons();
@@ -329,7 +340,7 @@ export async function createApp(
     title.textContent = 'This document could not be shown.';
     const detail = document.createElement('p');
     detail.textContent = message;
-    state.append(title, detail, createOpenButton('Open another document', chooseDocument));
+    state.append(title, detail, createOpenButton('Open another document', chooseDocuments));
     viewport.append(state);
     renderWatchWarning();
   };
@@ -343,7 +354,7 @@ export async function createApp(
     const tab = activeTab();
     if (!tab) {
       shell.className = 'app-shell';
-      viewport.append(createEmptyState(chooseDocument));
+      viewport.append(createEmptyState(chooseDocuments));
       renderWatchWarning();
       document.title = 'FFM Viewer';
       return;
@@ -374,10 +385,10 @@ export async function createApp(
       requestAnimationFrame(() => {
         if (activeId === tab.id) viewport.scrollTop = tab.scrollTop;
       });
-    } else {
+    } else if (tab.payload.kind === 'json') {
       try {
-        activeJsonView = createJsonCodeView(formatJsonDocument(tab.payload.content));
-        const jsonOutline = activeJsonView.querySelector<HTMLElement>('.json-outline');
+        activeCodeView = createJsonCodeView(formatJsonDocument(tab.payload.content));
+        const jsonOutline = activeCodeView.querySelector<HTMLElement>('.json-outline');
         if (jsonOutline) {
           outlineSection.content.append(jsonOutline);
           const updateCount = () => {
@@ -389,16 +400,37 @@ export async function createApp(
           outlineObserver = new MutationObserver(updateCount);
           outlineObserver.observe(jsonOutline, { childList: true, subtree: true });
         }
-        viewport.append(activeJsonView);
+        viewport.append(activeCodeView);
         requestAnimationFrame(() => {
           if (activeId !== tab.id) return;
-          const scroller = activeJsonView?.querySelector<HTMLElement>('.cm-scroller');
+          const scroller = activeCodeView?.querySelector<HTMLElement>('.cm-scroller');
           if (scroller) scroller.scrollTop = tab.scrollTop;
         });
       } catch (error) {
         renderError(error instanceof Error ? error.message : 'Invalid JSON.');
         return;
       }
+    } else if (tab.payload.kind === 'image') {
+      const imageDocument = document.createElement('section');
+      imageDocument.className = 'image-document';
+      const image = document.createElement('img');
+      image.src = tab.payload.content;
+      image.alt = tab.payload.name;
+      image.decoding = 'async';
+      image.draggable = false;
+      image.addEventListener('error', () => {
+        if (activeId === tab.id) renderError('Image could not be decoded.');
+      });
+      imageDocument.append(image);
+      viewport.append(imageDocument);
+    } else {
+      activeCodeView = createTextCodeView(tab.payload.content);
+      viewport.append(activeCodeView);
+      requestAnimationFrame(() => {
+        if (activeId !== tab.id) return;
+        const scroller = activeCodeView?.querySelector<HTMLElement>('.cm-scroller');
+        if (scroller) scroller.scrollTop = tab.scrollTop;
+      });
     }
     renderWatchWarning();
     document.title = `${tab.payload.name} — FFM Viewer`;
@@ -540,9 +572,9 @@ export async function createApp(
     return openQueue;
   }
 
-  async function chooseDocument(): Promise<void> {
-    const path = await bridge.chooseDocument();
-    if (path) await queueDocument(path);
+  async function chooseDocuments(): Promise<void> {
+    const paths = await bridge.chooseDocuments();
+    for (const path of paths) await queueDocument(path);
   }
 
   const closeQuickSwitcher = () => {
@@ -620,14 +652,14 @@ export async function createApp(
     if (id) activateTab(id, false);
   });
   commandCenter.addEventListener('click', openQuickSwitcher);
-  openButton.addEventListener('click', () => void chooseDocument());
+  openButton.addEventListener('click', () => void chooseDocuments());
 
   if (activeKeydownListener) window.removeEventListener('keydown', activeKeydownListener);
   activeKeydownListener = (event) => {
     const modifier = event.ctrlKey || event.metaKey;
     if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'o') {
       event.preventDefault();
-      void chooseDocument();
+      void chooseDocuments();
       return;
     }
     if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'k') {
@@ -664,6 +696,6 @@ export async function createApp(
   renderActive();
   await bridge.onOpenRequested((path) => void queueDocument(path));
   await bridge.onFileDropped((path) => void queueDocument(path));
-  const pendingPath = await bridge.takePendingOpen();
-  if (pendingPath) await queueDocument(pendingPath);
+  const pendingPaths = await bridge.takePendingOpen();
+  for (const path of pendingPaths) await queueDocument(path);
 }

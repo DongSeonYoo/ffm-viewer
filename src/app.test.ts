@@ -20,13 +20,30 @@ function jsonDocument(content = '{"service":{"name":"api"}}'): DocumentPayload {
   };
 }
 
+function codeDocument(
+  kind: 'text' | 'yaml' | 'toml',
+  name: string,
+  content: string,
+): DocumentPayload {
+  return { path: `/tmp/${name}`, name, kind, content };
+}
+
+function imageDocument(name = 'pixel.png'): DocumentPayload {
+  return {
+    path: `/tmp/${name}`,
+    name,
+    kind: 'image',
+    content: 'data:image/png;base64,cGl4ZWw=',
+  };
+}
+
 function createBridge(documents: Record<string, DocumentPayload> = {}) {
   let openHandler: ((path: string) => void) | undefined;
   let changeHandler: ((path: string) => void) | undefined;
   let watchErrorHandler: ((path: string) => void) | undefined;
 
   const bridge: DesktopBridge = {
-    chooseDocument: vi.fn().mockResolvedValue(null),
+    chooseDocuments: vi.fn().mockResolvedValue([]),
     readDocument: vi.fn(async (path: string) => {
       const document = documents[path];
       if (!document) throw new Error('File could not be opened.');
@@ -36,7 +53,7 @@ function createBridge(documents: Record<string, DocumentPayload> = {}) {
       changeHandler = handler;
       watchErrorHandler = onError;
     }),
-    takePendingOpen: vi.fn().mockResolvedValue(null),
+    takePendingOpen: vi.fn().mockResolvedValue([]),
     onOpenRequested: vi.fn(async (handler) => {
       openHandler = handler;
       return () => undefined;
@@ -64,7 +81,7 @@ describe('createApp', () => {
     await createApp(document.querySelector('#app')!, bridge);
 
     expect(document.querySelector('.empty-state button')?.textContent).toMatch(/Open document/i);
-    expect(document.body.textContent).toContain('Markdown or JSON');
+    expect(document.body.textContent).toContain('supported local file');
   });
 
   it('uses the desktop open shortcut without adding editor chrome', async () => {
@@ -72,7 +89,40 @@ describe('createApp', () => {
     await createApp(document.querySelector('#app')!, bridge);
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', metaKey: true }));
-    await vi.waitFor(() => expect(bridge.chooseDocument).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(bridge.chooseDocuments).toHaveBeenCalledOnce());
+  });
+
+  it('opens every document selected in the native dialog', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const { bridge } = createBridge({ [first.path]: first, [second.path]: second });
+    vi.mocked(bridge.chooseDocuments).mockResolvedValue([first.path, second.path]);
+    await createApp(document.querySelector('#app')!, bridge);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', metaKey: true }));
+
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="tab"]')).toHaveLength(2));
+    expect(Array.from(document.querySelectorAll('[role="tab"]'))
+      .map((tab) => tab.textContent)).toEqual([
+        expect.stringContaining('readme.md'),
+        expect.stringContaining('second.md'),
+      ]);
+  });
+
+  it('opens every queued startup document in order', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...jsonDocument(), path: '/tmp/second.json', name: 'second.json' };
+    const { bridge } = createBridge({ [first.path]: first, [second.path]: second });
+    vi.mocked(bridge.takePendingOpen).mockResolvedValue([first.path, second.path]);
+
+    await createApp(document.querySelector('#app')!, bridge);
+
+    expect(Array.from(document.querySelectorAll('[role="tab"]'))
+      .map((tab) => tab.textContent)).toEqual([
+        expect.stringContaining('readme.md'),
+        expect.stringContaining('second.json'),
+      ]);
+    expect(document.querySelector('.json-code-view')).not.toBeNull();
   });
 
   it('renders a selected Markdown file as an article', async () => {
@@ -102,6 +152,59 @@ describe('createApp', () => {
     expect(document.querySelector('.json-outline')?.textContent).toContain('service');
     expect(document.querySelector('.cm-editor')).not.toBeNull();
     expect(document.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
+  });
+
+  it('renders TXT, YAML, and TOML as read-only code without JSON parsing', async () => {
+    const payloads = [
+      codeDocument('text', 'notes.txt', 'plain notes'),
+      codeDocument('yaml', 'config.yaml', 'server:\n  port: 4000'),
+      codeDocument('toml', 'config.toml', '[server]\nport = 4000'),
+    ];
+    const documents = Object.fromEntries(payloads.map((payload) => [payload.path, payload]));
+    const { bridge, requestOpen } = createBridge(documents);
+    await createApp(document.querySelector('#app')!, bridge);
+
+    for (const payload of payloads) {
+      requestOpen(payload.path);
+      await vi.waitFor(() => {
+        expect(document.querySelector('.text-code-view')?.textContent).toContain(
+          payload.content.split('\n').at(-1),
+        );
+      });
+      expect(document.querySelector('[data-section-count="outline"]')?.textContent).toBe('0');
+    }
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(3);
+    expect(Array.from(document.querySelectorAll('.document-tab .document-type'))
+      .map((element) => element.textContent)).toEqual(['TXT', 'YAML', 'TOML']);
+  });
+
+  it('renders image documents through an img element without injecting SVG markup', async () => {
+    const payload = {
+      ...imageDocument('vector.svg'),
+      content: 'data:image/svg+xml;base64,PHN2Zz48c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9zdmc+',
+    };
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.image-document img')).not.toBeNull());
+    expect(document.querySelector('.image-document img')?.getAttribute('src')).toBe(payload.content);
+    expect(document.querySelector('.image-document script')).toBeNull();
+    expect(document.querySelector('.document-tab .document-type')?.textContent).toBe('IMG');
+  });
+
+  it('shows a recoverable error when image bytes cannot be decoded', async () => {
+    const payload = imageDocument();
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.image-document img')).not.toBeNull());
+
+    document.querySelector('.image-document img')?.dispatchEvent(new Event('error'));
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Image could not be decoded',
+    );
   });
 
   it('keeps opened documents in tabs and reuses an existing tab', async () => {

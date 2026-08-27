@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
-    "shortDescription": "A fast local viewer for Markdown and JSON documents",
+    "shortDescription": "A fast local viewer for documents, data, and images",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -51,6 +51,60 @@
       {
         "ext": ["json"],
         "mimeType": "application/json",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["txt"],
+        "mimeType": "text/plain",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["yaml", "yml"],
+        "mimeType": "application/yaml",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["toml"],
+        "mimeType": "application/toml",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["png"],
+        "mimeType": "image/png",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["jpg", "jpeg"],
+        "mimeType": "image/jpeg",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["gif"],
+        "mimeType": "image/gif",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["webp"],
+        "mimeType": "image/webp",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["avif"],
+        "mimeType": "image/avif",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["svg"],
+        "mimeType": "image/svg+xml",
         "role": "Viewer",
         "rank": "Alternate"
       }

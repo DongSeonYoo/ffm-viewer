@@ -435,7 +435,7 @@ a:focus-visible {
   overflow: auto;
 }
 
-.app-shell.is-json .document-viewport {
+.app-shell:is(.is-json, .is-text, .is-yaml, .is-toml) .document-viewport {
   overflow: hidden;
 }
 
@@ -446,6 +446,25 @@ a:focus-visible {
 
 .document-viewport > .json-code-view {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.text-code-view,
+.text-code-editor {
+  height: 100%;
+}
+
+.image-document {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  padding: 24px;
+}
+
+.image-document img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 133px);
+  object-fit: contain;
 }
 
 .quick-switcher {
@@ -950,7 +969,7 @@ a:focus-visible {
   color: var(--ink);
 }
 
-.app-shell.is-json .json-code-editor {
+.app-shell:is(.is-json, .is-text, .is-yaml, .is-toml) .json-code-editor {
   height: 100%;
 }
 

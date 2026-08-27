@@ -2,7 +2,7 @@
 
 **Files, fast.**
 
-FFM Viewer is a lightweight Tauri desktop app that renders Markdown as a clean reading surface and JSON as a collapsible tree. Files stay on your machine.
+FFM Viewer is a lightweight Tauri desktop app for Markdown, JSON, plain text, YAML, TOML, and common image files. Files stay on your machine.
 
 ## Install on macOS
 

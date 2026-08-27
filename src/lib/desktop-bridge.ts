@@ -1,4 +1,4 @@
-export type DocumentKind = 'markdown' | 'json';
+export type DocumentKind = 'markdown' | 'json' | 'text' | 'yaml' | 'toml' | 'image';
 
 export interface DocumentPayload {
   readonly path: string;
@@ -11,14 +11,14 @@ export type Dispose = () => void;
 export type PathHandler = (path: string) => void;
 
 export interface DesktopBridge {
-  chooseDocument(): Promise<string | null>;
+  chooseDocuments(): Promise<readonly string[]>;
   readDocument(path: string): Promise<DocumentPayload>;
   watchDocument(
     path: string,
     onChange: PathHandler,
     onError: PathHandler,
   ): Promise<void>;
-  takePendingOpen(): Promise<string | null>;
+  takePendingOpen(): Promise<readonly string[]>;
   onOpenRequested(handler: PathHandler): Promise<Dispose>;
   onFileDropped(handler: PathHandler): Promise<Dispose>;
   openExternal(url: string): Promise<void>;
