@@ -42,18 +42,18 @@ pnpm build:web
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Build a release bundle:
+Build the three app channels:
 
 ```bash
-pnpm build
+pnpm build           # FFM Viewer: published release
+pnpm build:beta-dmg  # FFM_beta: optimized personal test build
+pnpm build:dev-dmg   # FFM_dev: diagnostics-enabled development build
 ```
 
-Build the latest local test image. This replaces `FFM_dev.dmg`, installs
-`/Applications/FFM_dev.app`, registers it with macOS, and launches it:
-
-```bash
-pnpm build:dev-dmg
-```
+The beta and dev commands replace their root-level DMG, install the matching
+app in `/Applications`, register it with macOS, and launch it. Their bundle
+identifiers and local app data are separate from the published app and from
+each other.
 
 ## Publish a release
 

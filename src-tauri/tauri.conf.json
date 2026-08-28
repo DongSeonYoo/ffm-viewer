@@ -18,6 +18,7 @@
         "height": 760,
         "minWidth": 540,
         "minHeight": 420,
+        "devtools": false,
         "resizable": true,
         "fullscreen": false,
         "dragDropEnabled": true
