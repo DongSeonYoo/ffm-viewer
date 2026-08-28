@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "ffm-viewer"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "notify",
