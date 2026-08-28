@@ -104,7 +104,18 @@ function createBridge(
 
 describe('createApp', () => {
   beforeEach(() => {
+    const values = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        clear: () => values.clear(),
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    });
     document.body.innerHTML = '<div id="app"></div>';
+    window.localStorage.clear();
+    delete document.documentElement.dataset.theme;
   });
 
   it('starts with a quiet invitation to open or drop a supported document', async () => {
@@ -430,6 +441,101 @@ describe('createApp', () => {
 
     await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
     expect(document.querySelector('[data-quick-switcher]')).toBeNull();
+  });
+
+  it('opens Settings with Cmd+, and defaults to FFM Green', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    const opener = document.querySelector<HTMLButtonElement>('[aria-label="Open document"]')!;
+    opener.focus();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ',',
+      code: 'Comma',
+      metaKey: true,
+    }));
+
+    expect(document.documentElement.dataset.theme).toBe('green');
+    expect(document.querySelector('dialog[data-settings]')).not.toBeNull();
+    const select = document.querySelector<HTMLSelectElement>('[name="theme"]')!;
+    expect(select.value).toBe('green');
+    select.focus();
+    select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(document.activeElement).toBe(
+      document.querySelector<HTMLButtonElement>('[aria-label="Close Settings"]'),
+    );
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Tab',
+      shiftKey: true,
+      bubbles: true,
+    }));
+    expect(document.activeElement).toBe(select);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.querySelector('[data-settings]')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('persists the selected theme and restores it on the next launch', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ',',
+      code: 'Comma',
+      metaKey: true,
+    }));
+
+    const select = document.querySelector<HTMLSelectElement>('[name="theme"]')!;
+    select.value = 'light';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(window.localStorage.getItem('ffm.theme')).toBe('light');
+
+    document.body.innerHTML = '<div id="app"></div>';
+    delete document.documentElement.dataset.theme;
+    await createApp(document.querySelector('#app')!, bridge);
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ',',
+      code: 'Comma',
+      metaKey: true,
+    }));
+    expect(document.querySelector<HTMLSelectElement>('[name="theme"]')?.value).toBe('light');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.querySelector('[data-settings]')).toBeNull();
+  });
+
+  it('falls back to FFM Green when the stored theme is invalid', async () => {
+    window.localStorage.setItem('ffm.theme', 'unknown');
+    const { bridge } = createBridge();
+
+    await createApp(document.querySelector('#app')!, bridge);
+
+    expect(document.documentElement.dataset.theme).toBe('green');
+  });
+
+  it('keeps theme switching usable when localStorage fails', async () => {
+    const getItem = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('unavailable');
+    });
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('unavailable');
+    });
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ',',
+      code: 'Comma',
+      metaKey: true,
+    }));
+
+    const select = document.querySelector<HTMLSelectElement>('[name="theme"]')!;
+    select.value = 'light';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(document.documentElement.dataset.theme).toBe('light');
+    getItem.mockRestore();
+    setItem.mockRestore();
   });
 
   it('closes only the active tab when the native Close Tab menu fires', async () => {

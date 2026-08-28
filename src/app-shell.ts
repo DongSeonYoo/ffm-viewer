@@ -23,6 +23,13 @@ const MAX_IMAGE_DATA_CHARS = 24 * 1024 * 1024;
 const MAX_HISTORY = 100;
 const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
 const RECOVERY_WARNING = 'Recovery unavailable. Keep this tab open or save it to a file.';
+const THEME_STORAGE_KEY = 'ffm.theme';
+const THEME_OPTIONS = [
+  { value: 'green', label: 'FFM Green' },
+  { value: 'light', label: 'Light' },
+  { value: 'system', label: 'System' },
+] as const;
+type ThemePreference = typeof THEME_OPTIONS[number]['value'];
 type ScratchViewKind = Exclude<DocumentKind, 'json' | 'image'>;
 const SCRATCH_VIEW_ACTIONS: ReadonlyArray<{
   readonly kind: ScratchViewKind;
@@ -42,6 +49,25 @@ interface OpenTab {
   dirty: boolean;
   hint?: 'yaml' | 'toml';
   warning?: string;
+}
+
+function readThemePreference(): ThemePreference {
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'green' || stored === 'light' || stored === 'system') return stored;
+  } catch {
+    // Storage can be unavailable; the product default remains usable.
+  }
+  return 'green';
+}
+
+function persistThemePreference(theme: ThemePreference): void {
+  document.documentElement.dataset.theme = theme;
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Applying the theme matters more than persisting it.
+  }
 }
 
 function markImageUnavailable(image: HTMLImageElement): void {
@@ -180,6 +206,7 @@ export async function createApp(
   root: HTMLElement,
   bridge: DesktopBridge,
 ): Promise<void> {
+  document.documentElement.dataset.theme = readThemePreference();
   const tabs: OpenTab[] = [];
   const history: string[] = [];
   let historyIndex = -1;
@@ -860,7 +887,91 @@ export async function createApp(
     root.querySelector('[data-quick-switcher]')?.remove();
   };
 
+  let settingsReturnFocus: HTMLElement | undefined;
+  const closeSettings = () => {
+    const dialog = root.querySelector<HTMLDialogElement>('[data-settings]');
+    if (!dialog) return;
+    if (dialog.open && typeof dialog.close === 'function') dialog.close();
+    (dialog.closest('.settings-overlay') ?? dialog).remove();
+    settingsReturnFocus?.focus();
+    settingsReturnFocus = undefined;
+  };
+
+  const openSettings = () => {
+    closeQuickSwitcher();
+    closeSettings();
+    settingsReturnFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : undefined;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'settings-overlay';
+    const dialog = document.createElement('dialog');
+    dialog.className = 'settings-panel';
+    dialog.dataset.settings = '';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'settings-title');
+    const header = document.createElement('header');
+    header.className = 'settings-header';
+    const title = document.createElement('h2');
+    title.id = 'settings-title';
+    title.textContent = 'Settings';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toolbar-button settings-close';
+    close.setAttribute('aria-label', 'Close Settings');
+    close.textContent = '×';
+    close.addEventListener('click', closeSettings);
+    header.append(title, close);
+
+    const row = document.createElement('div');
+    row.className = 'settings-row';
+    const label = document.createElement('label');
+    label.htmlFor = 'theme-select';
+    label.textContent = 'Appearance';
+    const select = document.createElement('select');
+    select.id = 'theme-select';
+    select.name = 'theme';
+
+    for (const option of THEME_OPTIONS) {
+      const item = document.createElement('option');
+      item.value = option.value;
+      item.textContent = option.label;
+      select.append(item);
+    }
+    select.value = document.documentElement.dataset.theme ?? 'green';
+    select.addEventListener('change', () => {
+      const option = THEME_OPTIONS.find(({ value }) => value === select.value);
+      if (!option) return;
+      persistThemePreference(option.value);
+    });
+
+    row.append(label, select);
+    dialog.append(header, row);
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      closeSettings();
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key !== 'Tab') return;
+      if (event.shiftKey && document.activeElement === close) {
+        event.preventDefault();
+        select.focus();
+      } else if (!event.shiftKey && document.activeElement === select) {
+        event.preventDefault();
+        close.focus();
+      }
+    });
+    overlay.append(dialog);
+    root.append(overlay);
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    requestAnimationFrame(() => select.focus());
+  };
+
   const openQuickSwitcher = () => {
+    closeSettings();
     closeQuickSwitcher();
     if (tabs.length === 0) return;
     const overlay = document.createElement('div');
@@ -979,6 +1090,15 @@ export async function createApp(
       openQuickSwitcher();
       return;
     }
+    if (
+      modifier
+      && !event.altKey
+      && (event.code === 'Comma' || event.key === ',')
+    ) {
+      event.preventDefault();
+      openSettings();
+      return;
+    }
     if (modifier && event.altKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
       event.preventDefault();
       if (tabs.length === 0) return;
@@ -996,6 +1116,10 @@ export async function createApp(
       return;
     }
     if (event.key === 'Escape') {
+      if (root.querySelector('[data-settings]')) {
+        closeSettings();
+        return;
+      }
       if (root.querySelector('[data-quick-switcher]')) {
         closeQuickSwitcher();
         return;

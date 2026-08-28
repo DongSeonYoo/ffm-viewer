@@ -50,11 +50,18 @@ test('JSON opens as formatted code with a key outline', async ({ page }) => {
   await expect(page.locator('.cm-search')).toBeVisible();
 });
 
-test('the reading surface follows dark appearance without changing its hierarchy', async ({
+test('System theme follows macOS appearance without changing hierarchy', async ({
   page,
 }) => {
-  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+,');
+  await page.locator('[name="theme"]').selectOption('system');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(252, 252, 250)');
+
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(23, 26, 25)');
+  await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
 
   const colors = await page.locator('body').evaluate((element) => {
     const style = getComputedStyle(element);
@@ -62,6 +69,52 @@ test('the reading surface follows dark appearance without changing its hierarchy
   });
   expect(colors.background).not.toBe('rgb(255, 255, 255)');
   expect(contrastRatio(colors.background, colors.text)).toBeGreaterThanOrEqual(4.5);
+});
+
+test('FFM Green is the default and Settings persists appearance', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/?fixture=markdown');
+
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'green');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(23, 26, 25)');
+
+  const opener = page.getByRole('button', { name: 'Open document' });
+  await opener.focus();
+  await page.keyboard.press('Meta+,');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  const select = page.locator('[name="theme"]');
+  await expect(select).toBeFocused();
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement?.closest('dialog') !== null)).toBe(true);
+  await select.selectOption('light');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(252, 252, 250)');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
+  await expect(opener).toBeFocused();
+
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(252, 252, 250)');
+});
+
+test('Settings remains visible when showModal is unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await page.goto('/?fixture=markdown');
+
+  await page.keyboard.press('Meta+,');
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('.settings-overlay')).toHaveCSS('position', 'fixed');
+  const bounds = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bounds?.y).toBeGreaterThanOrEqual(0);
+  expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 0);
 });
 
 test('large JSON reaches first paint without filling the outline DOM', async ({ page }) => {
