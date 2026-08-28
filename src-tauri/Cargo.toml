@@ -1,6 +1,6 @@
 [package]
 name = "ffm-viewer"
-version = "0.2.3"
+version = "0.3.0"
 description = "A fast local viewer for documents, data, and images"
 authors = ["FFM Viewer contributors"]
 edition = "2021"
@@ -14,6 +14,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = "0.22"
+frizbee = "=0.13.0"
+ignore = "=0.4.33"
 notify = "8"
 percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
@@ -22,7 +24,12 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+unicode-normalization = "=0.1.25"
 url = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "=0.6.2"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "NSEvent"] }
 
 [profile.release]
 codegen-units = 1

@@ -1,0 +1,20 @@
+{
+  "productName": "FFM_beta",
+  "identifier": "io.github.dongseonyoo.ffm-viewer.beta",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "FFM_beta",
+        "width": 1040,
+        "height": 760,
+        "minWidth": 540,
+        "minHeight": 420,
+        "devtools": false,
+        "resizable": true,
+        "fullscreen": false,
+        "dragDropEnabled": true
+      }
+    ]
+  }
+}
