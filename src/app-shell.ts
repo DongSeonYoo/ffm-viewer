@@ -24,6 +24,7 @@ const MAX_HISTORY = 100;
 const MAX_DOCUMENT_MATCHES = 500;
 const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
 const RECOVERY_WARNING = 'Recovery unavailable. Keep this tab open or save it to a file.';
+const SHORTCUT_DIAGNOSTICS_ENABLED = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
 const THEME_STORAGE_KEY = 'ffm.theme';
 const THEME_OPTIONS = [
   { value: 'green', label: 'FFM Green' },
@@ -182,6 +183,10 @@ function fileType(path: string): string {
   return extension?.toLocaleUpperCase() ?? 'FILE';
 }
 
+function isKey(event: KeyboardEvent, code: string, fallback: string): boolean {
+  return event.code === code || event.key.toLocaleLowerCase() === fallback;
+}
+
 function findTextRanges(container: HTMLElement, query: string): Range[] {
   const ranges: Range[] = [];
   const needle = query.toLocaleLowerCase();
@@ -312,6 +317,13 @@ export async function createApp(
   layout.append(sidebar, workArea);
   shell.append(topbar, layout);
   root.replaceChildren(shell);
+  const shortcutDiagnostics = document.createElement('output');
+  if (SHORTCUT_DIAGNOSTICS_ENABLED) {
+    shortcutDiagnostics.className = 'shortcut-diagnostics';
+    shortcutDiagnostics.setAttribute('aria-label', 'FFM shortcut diagnostics');
+    shortcutDiagnostics.textContent = 'key=— meta=0 ctrl=0 alt=0';
+    root.append(shortcutDiagnostics);
+  }
 
   const activeTab = () => tabs.find((tab) => tab.id === activeId);
 
@@ -1205,11 +1217,11 @@ export async function createApp(
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(range);
+      input.focus();
       range.startContainer.parentElement?.scrollIntoView?.({ block: 'center' });
       count.textContent = `${rangeIndex + 1}/${ranges.length}`;
     };
 
-    input.addEventListener('input', () => showMatch(1));
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') closeDocumentSearch();
       if (event.key === 'Enter') {
@@ -1330,32 +1342,35 @@ export async function createApp(
 
   if (activeKeydownListener) window.removeEventListener('keydown', activeKeydownListener);
   activeKeydownListener = (event) => {
+    if (SHORTCUT_DIAGNOSTICS_ENABLED) {
+      shortcutDiagnostics.textContent = `key=${event.key} code=${event.code || '—'} meta=${Number(event.metaKey)} ctrl=${Number(event.ctrlKey)} alt=${Number(event.altKey)}`;
+    }
     const modifier = event.ctrlKey || event.metaKey;
     if (
       modifier
       && !event.altKey
-      && ['n', 't'].includes(event.key.toLocaleLowerCase())
+      && (isKey(event, 'KeyN', 'n') || isKey(event, 'KeyT', 't'))
     ) {
       event.preventDefault();
       openScratch();
       return;
     }
-    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'o') {
+    if (modifier && !event.altKey && isKey(event, 'KeyO', 'o')) {
       event.preventDefault();
       void chooseDocuments();
       return;
     }
-    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'k') {
+    if (modifier && !event.altKey && isKey(event, 'KeyK', 'k')) {
       event.preventDefault();
       openQuickSwitcher();
       return;
     }
-    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'p') {
+    if (modifier && !event.altKey && isKey(event, 'KeyP', 'p')) {
       event.preventDefault();
       openFileSearch();
       return;
     }
-    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'f') {
+    if (modifier && !event.altKey && isKey(event, 'KeyF', 'f')) {
       event.preventDefault();
       openCurrentDocumentSearch();
       return;
@@ -1363,8 +1378,7 @@ export async function createApp(
     if (
       event.ctrlKey
       && !event.metaKey
-      && !event.altKey
-      && event.key.toLocaleLowerCase() === 'w'
+      && isKey(event, 'KeyW', 'w')
     ) {
       event.preventDefault();
       closeActiveTabOrWindow();

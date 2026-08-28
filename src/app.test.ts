@@ -451,7 +451,9 @@ describe('createApp', () => {
     const { bridge } = createBridge();
     await createApp(document.querySelector('#app')!, bridge);
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', metaKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'ㅅ', code: 'KeyT', metaKey: true,
+    }));
 
     expect(document.querySelector('[role="tab"]')?.textContent).toContain('Untitled 1');
     expect(document.body.textContent).toContain('Paste content to preview');
@@ -464,7 +466,9 @@ describe('createApp', () => {
     vi.mocked(bridge.searchDocuments).mockResolvedValue([readme.path, data.path]);
     await createApp(document.querySelector('#app')!, bridge);
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'ㅔ', code: 'KeyP', metaKey: true,
+    }));
     const input = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
     expect(input).not.toBeNull();
     input.value = 'read';
@@ -512,7 +516,9 @@ describe('createApp', () => {
     requestOpen(payload.path);
     await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'ㄹ', code: 'KeyF', metaKey: true,
+    }));
 
     await vi.waitFor(() => expect(document.querySelector('.cm-search')).not.toBeNull());
   });
@@ -530,7 +536,8 @@ describe('createApp', () => {
     input.value = 'Find this';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
-    expect(window.getSelection()?.toString()).toBe('Find this');
+    expect(document.querySelector('.document-search-count')?.textContent).toBe('1/1');
+    expect(document.activeElement).toBe(input);
   });
 
   it('closes one of several tabs with literal Ctrl+W without closing the window', async () => {
@@ -543,7 +550,9 @@ describe('createApp', () => {
     requestOpen(second.path);
     await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'ㅈ', code: 'KeyW', ctrlKey: true, altKey: true,
+    }));
 
     expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
     expect(bridge.closeWindow).not.toHaveBeenCalled();

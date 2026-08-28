@@ -56,11 +56,12 @@ test('Cmd+F finds rendered Markdown text', async ({ page }) => {
 
   await page.keyboard.press('Meta+f');
   const input = page.locator('[data-document-search-input]');
-  await input.fill('calm reading');
+  await input.pressSequentially('calm reading');
   await input.press('Enter');
 
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('calm reading');
   await expect(page.locator('.document-search-count')).toHaveText('1/1');
+  await expect(input).toBeFocused();
 });
 
 test('System theme follows macOS appearance without changing hierarchy', async ({
