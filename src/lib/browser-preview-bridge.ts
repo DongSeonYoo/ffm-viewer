@@ -124,6 +124,9 @@ export function createBrowserPreviewBridge(
     persistRecovery: async (scratches) => {
       recovery = scratches.map((scratch) => ({ ...scratch }));
     },
+    searchDocuments: async (query) => payloads
+      .filter(({ name }) => name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+      .map(({ path }) => path),
     onCloseActiveTab: async () => () => undefined,
     onCloseRequested: async () => () => undefined,
   };

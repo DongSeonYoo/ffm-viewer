@@ -128,6 +128,14 @@ describe('createTauriBridge', () => {
     ]);
   });
 
+  it('searches documents through the native Spotlight command', async () => {
+    tauri.invoke.mockResolvedValue(['/tmp/readme.md']);
+
+    await expect(createTauriBridge().searchDocuments('read'))
+      .resolves.toEqual(['/tmp/readme.md']);
+    expect(tauri.invoke).toHaveBeenCalledWith('search_documents', { query: 'read' });
+  });
+
   it('prevents native close and destroys the window only after approval', async () => {
     const preventDefault = vi.fn();
     const approve = vi.fn().mockResolvedValue(true);

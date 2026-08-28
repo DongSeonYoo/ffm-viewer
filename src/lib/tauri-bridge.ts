@@ -158,6 +158,10 @@ export function createTauriBridge(): DesktopBridge {
       return queued;
     },
 
+    searchDocuments(query) {
+      return invoke<string[]>('search_documents', { query });
+    },
+
     async onCloseRequested(handler) {
       const window = getCurrentWebviewWindow();
       let handling = false;

@@ -1,6 +1,7 @@
 mod document;
 mod open_requests;
 mod recovery;
+mod search;
 mod watch;
 
 use open_requests::{dispatch_or_queue, OpenRequestState};
@@ -122,6 +123,7 @@ pub fn run() {
             open_requests::take_pending_open,
             recovery::load_recovery,
             recovery::persist_recovery,
+            search::search_documents,
             watch::watch_document,
         ])
         .setup(|app| {
