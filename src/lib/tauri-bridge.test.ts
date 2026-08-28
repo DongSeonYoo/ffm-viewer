@@ -132,12 +132,34 @@ describe('createTauriBridge', () => {
     ]);
   });
 
-  it('searches documents through the native Spotlight command', async () => {
+  it('passes the cache refresh contract to native document search', async () => {
     tauri.invoke.mockResolvedValue(['/tmp/readme.md']);
 
-    await expect(createTauriBridge().searchDocuments('read'))
+    await expect(createTauriBridge().searchDocuments('read', true))
       .resolves.toEqual(['/tmp/readme.md']);
-    expect(tauri.invoke).toHaveBeenCalledWith('search_documents', { query: 'read' });
+    expect(tauri.invoke).toHaveBeenCalledWith('search_documents', {
+      query: 'read',
+      refresh: true,
+    });
+  });
+
+  it('forwards native file-search menu requests', async () => {
+    const handler = vi.fn();
+
+    await createTauriBridge().onSearchFiles(handler);
+    tauri.eventHandlers.get('search-files-requested')?.();
+
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('replays a file-search shortcut queued before the listener was ready', async () => {
+    const handler = vi.fn();
+    tauri.invoke.mockResolvedValueOnce(true);
+
+    await createTauriBridge().onSearchFiles(handler);
+
+    expect(tauri.invoke).toHaveBeenCalledWith('mark_file_search_ready');
+    expect(handler).toHaveBeenCalledOnce();
   });
 
   it('prevents native close and hides the window without quitting', async () => {

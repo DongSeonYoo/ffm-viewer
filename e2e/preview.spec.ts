@@ -46,9 +46,15 @@ test('JSON opens as formatted code with a key outline', async ({ page }) => {
   const source = await content.textContent();
   await content.press('a');
   await expect(content).toHaveText(source ?? '');
-  await page.getByRole('button', { name: /Search open files/ }).focus();
+  await page.getByRole('button', { name: /Search files on this Mac/ }).focus();
   await page.keyboard.press('Meta+f');
   await expect(page.locator('.cm-search')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await content.focus();
+  await page.keyboard.press('Meta+p');
+  await expect(page.locator('[data-file-search-input]')).toBeVisible();
+  await expect(page.locator('.file-quick-open')).toBeVisible();
+  await expect(page.locator('[data-quick-switcher]')).toHaveCount(0);
 });
 
 test('Cmd+F finds rendered Markdown text', async ({ page }) => {
@@ -137,6 +143,16 @@ test('Settings remains visible when showModal is unavailable', async ({ page }) 
   expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 0);
 });
 
+test('Settings closes when its backdrop is clicked', async ({ page }) => {
+  await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+,');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+
+  await page.mouse.click(20, 20);
+
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
+});
+
 test('large JSON reaches first paint without filling the outline DOM', async ({ page }) => {
   await page.goto('/?fixture=json-large');
 
@@ -166,14 +182,51 @@ test('multiple files stay open and keyboard navigation wraps', async ({ page }) 
   await page.keyboard.press('Meta+9');
   await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible();
 
+  await page.keyboard.press('Meta+Shift+f');
+  await expect(page.locator('[data-open-tab-search-input]')).toBeVisible();
+  await expect(page.locator('.content-search-box')).toBeVisible();
+  await page.keyboard.press('Escape');
   await page.keyboard.press('Meta+k');
-  await page.locator('[data-quick-switch-input]').fill('service');
-  await page.locator('[data-quick-switch-input]').press('Enter');
+  const input = page.locator('[data-open-tab-search-input]');
+  await input.fill('service');
+  await expect(page.locator('[data-content-search-summary]')).toHaveText(
+    '1 result in 1 document',
+  );
+  await expect(page.locator('[data-content-search-group]')).toHaveCount(1);
+  await expect(page.locator('[data-content-search-group]')).toContainText('service.json');
+  await expect(page.locator('[data-open-tab-search-result]')).toContainText('service');
+  await input.press('Enter');
+  await expect(page.locator('.json-code-view')).toBeVisible();
+  await expect(page.locator('.cm-activeLine')).toContainText('service');
+});
+
+test('Ctrl+B toggles the sidebar and Cmd+Z navigates actions', async ({ page }) => {
+  await page.goto('/?fixture=multi');
+  const sidebar = page.locator('.app-sidebar');
+
+  await page.keyboard.press('Control+b');
+  await expect(sidebar).toBeHidden();
+  await page.keyboard.press('Control+b');
+  await expect(sidebar).toBeVisible();
+
+  await page.getByRole('button', { name: 'Open document', exact: true }).click();
+  await expect(page.locator('.json-code-view')).toBeVisible();
+  await page.keyboard.press('Meta+z');
+  await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
+  await page.keyboard.press('Meta+Shift+z');
   await expect(page.locator('.json-code-view')).toBeVisible();
 });
 
 test('Cmd+P searches filenames and opens the keyboard-selected result', async ({ page }) => {
   await page.goto('/?fixture=multi');
+
+  await page.keyboard.press('Meta+p');
+  await expect(page.locator('.file-quick-open')).toBeVisible();
+  await expect(page.locator('[data-quick-switcher]')).toHaveCount(0);
+  expect((await page.locator('.file-quick-open').boundingBox())?.y).toBeLessThan(40);
+  await page.getByRole('button', { name: 'Open document', exact: true }).click();
+  await expect(page.locator('.file-quick-open')).toHaveCount(0);
+  await expect(page.getByRole('tab')).toHaveCount(2);
 
   await page.keyboard.press('Meta+p');
   const input = page.locator('[data-file-search-input]');

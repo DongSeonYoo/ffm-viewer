@@ -158,8 +158,8 @@ export function createTauriBridge(): DesktopBridge {
       return queued;
     },
 
-    searchDocuments(query) {
-      return invoke<string[]>('search_documents', { query });
+    searchDocuments(query, refresh) {
+      return invoke<string[]>('search_documents', { query, refresh });
     },
 
     closeWindow() {
@@ -196,6 +196,12 @@ export function createTauriBridge(): DesktopBridge {
 
     async onCloseActiveTab(handler) {
       const unlisten = await listen('close-active-tab', handler);
+      return normalizeDispose(unlisten);
+    },
+
+    async onSearchFiles(handler) {
+      const unlisten = await listen('search-files-requested', handler);
+      if (await invoke<boolean>('mark_file_search_ready')) handler();
       return normalizeDispose(unlisten);
     },
   };

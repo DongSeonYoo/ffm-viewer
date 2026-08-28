@@ -47,7 +47,30 @@ interface OutlinePage {
 
 export interface CodeViewElement extends HTMLElement {
   openSearch(): void;
+  revealRange(from: number, to: number): void;
   destroy(): void;
+}
+
+function disableWritingAssistance(input: HTMLInputElement | null): void {
+  if (!input) return;
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.setAttribute('autocorrect', 'off');
+  input.setAttribute('autocapitalize', 'off');
+}
+
+function revealRange(view: EditorView, from: number, to: number): void {
+  if (from < 0 || to < from || to > view.state.doc.length) return;
+  view.dispatch({
+    selection: { anchor: from, head: to },
+    effects: EditorView.scrollIntoView(from, { y: 'center' }),
+  });
+  view.focus();
+}
+
+function openSearch(wrapper: HTMLElement, view: EditorView): void {
+  openSearchPanel(view);
+  disableWritingAssistance(wrapper.querySelector<HTMLInputElement>('.cm-search input'));
 }
 
 const jsonHighlightStyle = HighlightStyle.define([
@@ -376,7 +399,13 @@ function commonEditorExtensions(
   return [
     EditorState.readOnly.of(true),
     ...(cspNonce ? [EditorView.cspNonce.of(cspNonce)] : []),
-    EditorView.contentAttributes.of({ 'aria-readonly': 'true' }),
+    EditorView.contentAttributes.of({
+      'aria-readonly': 'true',
+      autocomplete: 'off',
+      autocorrect: 'off',
+      autocapitalize: 'off',
+      spellcheck: 'false',
+    }),
     lineNumbers(),
     highlightActiveLine(),
     highlightActiveLineGutter(),
@@ -464,7 +493,8 @@ export function createJsonCodeView(source: string): CodeViewElement {
     destroyDiagnostics();
     view.destroy();
   };
-  wrapper.openSearch = () => openSearchPanel(view);
+  wrapper.openSearch = () => openSearch(wrapper, view);
+  wrapper.revealRange = (from, to) => revealRange(view, from, to);
   return wrapper;
 }
 
@@ -492,6 +522,7 @@ export function createTextCodeView(source: string): CodeViewElement {
     destroyDiagnostics();
     view.destroy();
   };
-  wrapper.openSearch = () => openSearchPanel(view);
+  wrapper.openSearch = () => openSearch(wrapper, view);
+  wrapper.revealRange = (from, to) => revealRange(view, from, to);
   return wrapper;
 }

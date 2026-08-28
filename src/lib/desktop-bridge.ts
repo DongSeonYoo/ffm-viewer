@@ -39,8 +39,9 @@ export interface DesktopBridge {
   ): Promise<boolean>;
   loadRecovery(): Promise<readonly ScratchRecovery[]>;
   persistRecovery(scratches: readonly ScratchRecovery[]): Promise<void>;
-  searchDocuments(query: string): Promise<readonly string[]>;
+  searchDocuments(query: string, refresh: boolean): Promise<readonly string[]>;
   closeWindow(): Promise<void>;
   onCloseActiveTab(handler: () => void): Promise<Dispose>;
+  onSearchFiles(handler: () => void): Promise<Dispose>;
   onCloseRequested(handler: () => Promise<boolean>): Promise<Dispose>;
 }

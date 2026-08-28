@@ -98,7 +98,18 @@ describe('createJsonCodeView', () => {
     expect(outline?.textContent).toContain('ready');
     expect(outline?.textContent).not.toContain('name');
     expect(viewer.querySelector('.cm-lineNumbers')).not.toBeNull();
-    expect(viewer.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
+    const content = viewer.querySelector<HTMLElement>('.cm-content');
+    expect(content?.getAttribute('aria-readonly')).toBe('true');
+    expect(content?.getAttribute('autocomplete')).toBe('off');
+    expect(content?.getAttribute('autocorrect')).toBe('off');
+    expect(content?.getAttribute('autocapitalize')).toBe('off');
+    expect(content?.getAttribute('spellcheck')).toBe('false');
+    viewer.openSearch();
+    const searchInput = viewer.querySelector<HTMLInputElement>('.cm-search input');
+    expect(searchInput?.autocomplete).toBe('off');
+    expect(searchInput?.spellcheck).toBe(false);
+    expect(searchInput?.getAttribute('autocorrect')).toBe('off');
+    expect(searchInput?.getAttribute('autocapitalize')).toBe('off');
     viewer.destroy();
   });
 
@@ -194,6 +205,16 @@ describe('createTextCodeView', () => {
     expect(viewer.querySelector('.cm-lineNumbers')).not.toBeNull();
     expect(viewer.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
     expect(viewer.querySelector('.json-outline')).toBeNull();
+    viewer.destroy();
+  });
+
+  it('reveals a selected source range', () => {
+    const viewer = createTextCodeView('needle first\nsecond needle');
+    document.body.append(viewer);
+
+    viewer.revealRange(20, 26);
+
+    expect(viewer.querySelector('.cm-activeLine')?.textContent).toContain('second needle');
     viewer.destroy();
   });
 });
