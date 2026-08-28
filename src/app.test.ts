@@ -485,7 +485,20 @@ describe('createApp', () => {
     expect(document.querySelector('[role="tab"]')?.textContent).toContain('config.json');
   });
 
-  it('keeps newer Cmd+P results when an older Spotlight request finishes late', async () => {
+  it('closes transient search UI before opening an externally requested file', async () => {
+    const payload = markdownDocument('# Opened outside');
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
+    expect(document.querySelector('[data-file-search]')).not.toBeNull();
+    requestOpen(payload.path);
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Opened outside'));
+    expect(document.querySelector('[data-file-search]')).toBeNull();
+  });
+
+  it('serializes Cmd+P Spotlight searches and keeps only the newest result', async () => {
     let resolveFirst!: (paths: readonly string[]) => void;
     const first = new Promise<readonly string[]>((resolve) => { resolveFirst = resolve; });
     const { bridge } = createBridge();
@@ -501,11 +514,12 @@ describe('createApp', () => {
     await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('a'));
     input.value = 'new';
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(document.body.textContent).toContain('newer.md'));
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    expect(bridge.searchDocuments).toHaveBeenCalledTimes(1);
     resolveFirst(['/tmp/older.md']);
-    await first;
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('new'));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('newer.md'));
 
-    expect(document.body.textContent).toContain('newer.md');
     expect(document.body.textContent).not.toContain('older.md');
   });
 
@@ -524,7 +538,7 @@ describe('createApp', () => {
   });
 
   it('finds rendered Markdown text with Cmd+F', async () => {
-    const payload = markdownDocument('# Read me\n\nFind this sentence.');
+    const payload = markdownDocument('# Read me\n\nFind this sentence.\n\nAcross\n\nblocks');
     const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
     await createApp(document.querySelector('#app')!, bridge);
     requestOpen(payload.path);
@@ -538,6 +552,45 @@ describe('createApp', () => {
 
     expect(document.querySelector('.document-search-count')?.textContent).toBe('1/1');
     expect(document.activeElement).toBe(input);
+
+    input.value = 'Acrossblocks';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(document.querySelector('.document-search-count')?.textContent).toBe('0/0');
+  });
+
+  it('starts reverse Markdown search at the final match', async () => {
+    const payload = markdownDocument('match first, match last');
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-document-search-input]')!;
+    input.value = 'match';
+    input.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', shiftKey: true, bubbles: true,
+    }));
+
+    expect(document.querySelector('.document-search-count')?.textContent).toBe('2/2');
+  });
+
+  it('finds Markdown text after Unicode characters without corrupting Range offsets', async () => {
+    const payload = markdownDocument('# İX marker');
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-document-search-input]')!;
+    const addRange = vi.spyOn(window.getSelection()!, 'addRange');
+    input.value = 'X';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(document.querySelector('.document-search-count')?.textContent).toBe('1/1');
+    expect(addRange.mock.calls[0]?.[0].toString()).toBe('X');
+    addRange.mockRestore();
   });
 
   it('closes one of several tabs with literal Ctrl+W without closing the window', async () => {
@@ -584,6 +637,75 @@ describe('createApp', () => {
     await vi.waitFor(() => expect(bridge.confirmClose).toHaveBeenCalled());
     expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
     expect(bridge.closeWindow).not.toHaveBeenCalled();
+  });
+
+  it('asks once when repeated Ctrl+W targets the same dirty Scratch tab', async () => {
+    let resolveDecision!: (decision: 'discard') => void;
+    const decision = new Promise<'discard'>((resolve) => { resolveDecision = resolve; });
+    const { bridge } = createBridge();
+    vi.mocked(bridge.confirmClose).mockImplementation(() => decision);
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', metaKey: true }));
+    pasteText('# Close once');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+
+    expect(bridge.confirmClose).toHaveBeenCalledTimes(1);
+    resolveDecision('discard');
+    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(1));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+  });
+
+  it('waits for Scratch recovery before accepting another tab or window close', async () => {
+    let resolveRecovery!: () => void;
+    const recovery = new Promise<void>((resolve) => { resolveRecovery = resolve; });
+    const { bridge, requestClose } = createBridge();
+    vi.mocked(bridge.confirmClose).mockResolvedValue('save');
+    vi.mocked(bridge.saveDocument).mockResolvedValue(true);
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', metaKey: true }));
+    pasteText('# Save once');
+    await vi.waitFor(() => expect(bridge.persistRecovery).toHaveBeenCalled());
+    vi.mocked(bridge.persistRecovery).mockClear();
+    vi.mocked(bridge.persistRecovery).mockImplementation(() => recovery);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+    await vi.waitFor(() => expect(bridge.persistRecovery).toHaveBeenCalledTimes(1));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+
+    await expect(requestClose()).resolves.toBe(false);
+    expect(bridge.confirmClose).toHaveBeenCalledTimes(1);
+    expect(bridge.saveDocument).toHaveBeenCalledTimes(1);
+    expect(bridge.persistRecovery).toHaveBeenCalledTimes(1);
+    expect(bridge.closeWindow).not.toHaveBeenCalled();
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
+
+    resolveRecovery();
+    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(1));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+  });
+
+  it('does not treat Control as Command', async () => {
+    const payload = markdownDocument('# Keep shortcuts native');
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Keep shortcuts native'));
+
+    for (const [key, code] of [
+      ['ㄹ', 'KeyF'],
+      ['ㅔ', 'KeyP'],
+      ['ㅏ', 'KeyK'],
+      ['ㅅ', 'KeyT'],
+    ]) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, code, ctrlKey: true }));
+    }
+
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(document.querySelector('[data-document-search]')).toBeNull();
+    expect(document.querySelector('[data-file-search]')).toBeNull();
+    expect(document.querySelector('[data-quick-switcher]')).toBeNull();
   });
 
   it('opens Settings with Cmd+, and defaults to FFM Green', async () => {
@@ -764,6 +886,14 @@ describe('createApp', () => {
 
     await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
     expect(document.querySelector<HTMLElement>('[data-format-hint]')?.hidden).toBe(false);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(document.querySelector('[data-file-search]')).toBeNull();
+    expect(document.querySelector<HTMLElement>('[data-format-hint]')?.hidden).toBe(false);
+
     document.querySelector<HTMLButtonElement>('[data-view-as="yaml"]')?.click();
     await vi.waitFor(() => {
       expect(document.querySelector('.text-code-view')?.textContent).toContain('port: 4000');

@@ -53,6 +53,12 @@ test('JSON opens as formatted code with a key outline', async ({ page }) => {
 
 test('Cmd+F finds rendered Markdown text', async ({ page }) => {
   await page.goto('/?fixture=markdown');
+  await page.locator('.markdown-document p').first().evaluate((paragraph) => {
+    paragraph.innerHTML = paragraph.innerHTML.replace(
+      'calm reading',
+      'calm <strong>reading</strong>',
+    );
+  });
 
   await page.keyboard.press('Meta+f');
   const input = page.locator('[data-document-search-input]');

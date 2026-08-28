@@ -189,21 +189,43 @@ function isKey(event: KeyboardEvent, code: string, fallback: string): boolean {
 
 function findTextRanges(container: HTMLElement, query: string): Range[] {
   const ranges: Range[] = [];
-  const needle = query.toLocaleLowerCase();
+  const matcher = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
+  const blocks = new Map<HTMLElement, Text[]>();
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node && ranges.length < MAX_DOCUMENT_MATCHES; node = walker.nextNode()) {
-    const text = node.textContent ?? '';
-    const haystack = text.toLocaleLowerCase();
-    let offset = 0;
-    while (ranges.length < MAX_DOCUMENT_MATCHES) {
-      const index = haystack.indexOf(needle, offset);
-      if (index < 0) break;
-      const range = document.createRange();
-      range.setStart(node, index);
-      range.setEnd(node, index + query.length);
-      ranges.push(range);
-      offset = index + Math.max(query.length, 1);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const block = node.parentElement?.closest<HTMLElement>(
+      'h1, h2, h3, h4, h5, h6, p, pre, li, td, th',
+    );
+    if (!block || !container.contains(block)) continue;
+    const nodes = blocks.get(block) ?? [];
+    nodes.push(node as Text);
+    blocks.set(block, nodes);
+  }
+
+  for (const nodes of blocks.values()) {
+    const parts: Array<{ node: Text; start: number; end: number }> = [];
+    let text = '';
+    for (const node of nodes) {
+      if (!node.data) continue;
+      const start = text.length;
+      text += node.data;
+      parts.push({ node, start, end: text.length });
     }
+    for (const match of text.matchAll(matcher)) {
+      const value = match[0];
+      if (match.index === undefined || !value) continue;
+      const start = match.index;
+      const end = start + value.length;
+      const startPart = parts.find((part) => start < part.end);
+      const endPart = parts.find((part) => end <= part.end);
+      if (!startPart || !endPart) continue;
+      const range = document.createRange();
+      range.setStart(startPart.node, start - startPart.start);
+      range.setEnd(endPart.node, end - endPart.start);
+      ranges.push(range);
+      if (ranges.length === MAX_DOCUMENT_MATCHES) break;
+    }
+    if (ranges.length === MAX_DOCUMENT_MATCHES) break;
   }
   return ranges;
 }
@@ -257,6 +279,7 @@ export async function createApp(
   let untitledCounter = 0;
   let activationRevision = 0;
   let startupWarning: string | undefined;
+  const closingTabIds = new Set<string>();
 
   const shell = document.createElement('div');
   shell.className = 'app-shell';
@@ -845,6 +868,25 @@ export async function createApp(
     return persistDirtyScratches(tab, tab.id);
   }
 
+  async function guardedTabClose(
+    tab: OpenTab,
+    finish?: () => void,
+  ): Promise<boolean> {
+    if (closingTabIds.has(tab.id)) return false;
+    if (!tab.dirty) {
+      finish?.();
+      return true;
+    }
+    closingTabIds.add(tab.id);
+    try {
+      const canClose = await canCloseTab(tab);
+      if (canClose) finish?.();
+      return canClose;
+    } finally {
+      closingTabIds.delete(tab.id);
+    }
+  }
+
   const requestCloseWindow = () => {
     void bridge.closeWindow().catch(() => {
       startupWarning = 'The window could not be closed.';
@@ -859,13 +901,7 @@ export async function createApp(
       removeTab(id);
       if (tabs.length === 0) requestCloseWindow();
     };
-    if (!tab.dirty) {
-      finish();
-      return;
-    }
-    void canCloseTab(tab).then((canClose) => {
-      if (canClose) finish();
-    });
+    void guardedTabClose(tab, finish);
   }
 
   const closeActiveTabOrWindow = () => {
@@ -874,14 +910,15 @@ export async function createApp(
   };
 
   async function canCloseWindow(): Promise<boolean> {
+    if (closingTabIds.size > 0) return false;
     for (const tab of tabs) {
       if (!tab.dirty) continue;
-      if (!(await canCloseTab(tab))) {
+      if (!(await guardedTabClose(tab))) {
         activateTab(tab.id);
         return false;
       }
     }
-    return true;
+    return closingTabIds.size === 0;
   }
 
   async function openDocument(path: string): Promise<void> {
@@ -939,6 +976,10 @@ export async function createApp(
   }
 
   function queueDocument(path: string): Promise<void> {
+    closeSettings();
+    closeQuickSwitcher();
+    closeFileSearch();
+    closeDocumentSearch();
     openQueue = openQueue.then(() => openDocument(path));
     return openQueue;
   }
@@ -1064,6 +1105,7 @@ export async function createApp(
     let timer: number | undefined;
     let revision = 0;
     let activeIndex = 0;
+    let searchQueue = Promise.resolve();
 
     const updateActiveResult = (nextIndex: number) => {
       const items = Array.from(list.querySelectorAll<HTMLElement>('[data-file-search-result]'));
@@ -1082,7 +1124,6 @@ export async function createApp(
     };
 
     const openResult = (path: string) => {
-      closeFileSearch();
       void queueDocument(path);
     };
 
@@ -1114,7 +1155,7 @@ export async function createApp(
       }
     };
 
-    const search = async () => {
+    const search = () => {
       const query = input.value.trim();
       const request = ++revision;
       if (!query) {
@@ -1122,12 +1163,15 @@ export async function createApp(
         return;
       }
       renderMessage('Searching…');
-      try {
-        const paths = await bridge.searchDocuments(query);
-        if (request === revision) renderResults(paths);
-      } catch {
-        if (request === revision) renderMessage('File search is unavailable.');
-      }
+      searchQueue = searchQueue.then(async () => {
+        if (request !== revision) return;
+        try {
+          const paths = await bridge.searchDocuments(query);
+          if (request === revision) renderResults(paths);
+        } catch {
+          if (request === revision) renderMessage('File search is unavailable.');
+        }
+      });
     };
 
     input.addEventListener('input', () => {
@@ -1135,7 +1179,11 @@ export async function createApp(
       timer = window.setTimeout(() => void search(), 60);
     });
     input.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeFileSearch();
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        closeFileSearch();
+        return;
+      }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         updateActiveResult(activeIndex + (event.key === 'ArrowDown' ? 1 : -1));
@@ -1211,7 +1259,9 @@ export async function createApp(
         count.textContent = '0/0';
         return;
       }
-      rangeIndex = (rangeIndex + direction + ranges.length) % ranges.length;
+      rangeIndex = rangeIndex === -1
+        ? (direction < 0 ? ranges.length - 1 : 0)
+        : (rangeIndex + direction + ranges.length) % ranges.length;
       const range = ranges[rangeIndex];
       if (!range) return;
       const selection = window.getSelection();
@@ -1223,7 +1273,11 @@ export async function createApp(
     };
 
     input.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeDocumentSearch();
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        closeDocumentSearch();
+        return;
+      }
       if (event.key === 'Enter') {
         event.preventDefault();
         showMatch(event.shiftKey ? -1 : 1);
@@ -1345,9 +1399,9 @@ export async function createApp(
     if (SHORTCUT_DIAGNOSTICS_ENABLED) {
       shortcutDiagnostics.textContent = `key=${event.key} code=${event.code || '—'} meta=${Number(event.metaKey)} ctrl=${Number(event.ctrlKey)} alt=${Number(event.altKey)}`;
     }
-    const modifier = event.ctrlKey || event.metaKey;
+    const command = event.metaKey;
     if (
-      modifier
+      command
       && !event.altKey
       && (isKey(event, 'KeyN', 'n') || isKey(event, 'KeyT', 't'))
     ) {
@@ -1355,22 +1409,22 @@ export async function createApp(
       openScratch();
       return;
     }
-    if (modifier && !event.altKey && isKey(event, 'KeyO', 'o')) {
+    if (command && !event.altKey && isKey(event, 'KeyO', 'o')) {
       event.preventDefault();
       void chooseDocuments();
       return;
     }
-    if (modifier && !event.altKey && isKey(event, 'KeyK', 'k')) {
+    if (command && !event.altKey && isKey(event, 'KeyK', 'k')) {
       event.preventDefault();
       openQuickSwitcher();
       return;
     }
-    if (modifier && !event.altKey && isKey(event, 'KeyP', 'p')) {
+    if (command && !event.altKey && isKey(event, 'KeyP', 'p')) {
       event.preventDefault();
       openFileSearch();
       return;
     }
-    if (modifier && !event.altKey && isKey(event, 'KeyF', 'f')) {
+    if (command && !event.altKey && isKey(event, 'KeyF', 'f')) {
       event.preventDefault();
       openCurrentDocumentSearch();
       return;
@@ -1385,7 +1439,7 @@ export async function createApp(
       return;
     }
     if (
-      modifier
+      command
       && !event.altKey
       && (event.code === 'Comma' || event.key === ',')
     ) {
@@ -1393,7 +1447,7 @@ export async function createApp(
       openSettings();
       return;
     }
-    if (modifier && event.altKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    if (command && event.altKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
       event.preventDefault();
       if (tabs.length === 0) return;
       const current = Math.max(0, tabs.findIndex((tab) => tab.id === activeId));
@@ -1402,7 +1456,7 @@ export async function createApp(
       if (next) activateTab(next.id);
       return;
     }
-    if (modifier && !event.altKey && /^[1-9]$/.test(event.key)) {
+    if (command && !event.altKey && /^[1-9]$/.test(event.key)) {
       event.preventDefault();
       const index = event.key === '9' ? tabs.length - 1 : Number(event.key) - 1;
       const tab = tabs[index];
