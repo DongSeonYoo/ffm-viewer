@@ -143,6 +143,21 @@ test('Settings remains visible when showModal is unavailable', async ({ page }) 
   expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 0);
 });
 
+test('Settings keeps every file type reachable at the minimum window size', async ({ page }) => {
+  await page.setViewportSize({ width: 540, height: 420 });
+  await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+,');
+
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+  const svg = page.getByRole('checkbox', { name: 'SVG .svg' });
+  await svg.scrollIntoViewIfNeeded();
+  await svg.click();
+  await expect(svg).not.toBeChecked();
+});
+
 test('Settings closes when its backdrop is clicked', async ({ page }) => {
   await page.goto('/?fixture=markdown');
   await page.keyboard.press('Meta+,');

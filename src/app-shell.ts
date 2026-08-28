@@ -27,12 +27,27 @@ const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
 const RECOVERY_WARNING = 'Recovery unavailable. Keep this tab open or save it to a file.';
 const SHORTCUT_DIAGNOSTICS_ENABLED = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
 const THEME_STORAGE_KEY = 'ffm.theme';
+const SEARCH_FORMAT_STORAGE_KEY = 'ffm.searchFormats';
 const THEME_OPTIONS = [
   { value: 'green', label: 'FFM Green' },
   { value: 'light', label: 'Light' },
   { value: 'system', label: 'System' },
 ] as const;
+const SEARCH_FORMATS = [
+  { id: 'markdown', label: 'Markdown', extensions: ['md', 'markdown'] },
+  { id: 'json', label: 'JSON', extensions: ['json'] },
+  { id: 'text', label: 'Text', extensions: ['txt'] },
+  { id: 'yaml', label: 'YAML', extensions: ['yaml', 'yml'] },
+  { id: 'toml', label: 'TOML', extensions: ['toml'] },
+  { id: 'png', label: 'PNG', extensions: ['png'] },
+  { id: 'jpeg', label: 'JPEG', extensions: ['jpg', 'jpeg'] },
+  { id: 'gif', label: 'GIF', extensions: ['gif'] },
+  { id: 'webp', label: 'WebP', extensions: ['webp'] },
+  { id: 'avif', label: 'AVIF', extensions: ['avif'] },
+  { id: 'svg', label: 'SVG', extensions: ['svg'] },
+] as const;
 type ThemePreference = typeof THEME_OPTIONS[number]['value'];
+type SearchFormatId = typeof SEARCH_FORMATS[number]['id'];
 type ScratchViewKind = Exclude<DocumentKind, 'json' | 'image'>;
 const SCRATCH_VIEW_ACTIONS: ReadonlyArray<{
   readonly kind: ScratchViewKind;
@@ -132,6 +147,46 @@ function persistThemePreference(theme: ThemePreference): void {
   } catch {
     // Applying the theme matters more than persisting it.
   }
+}
+
+function allSearchFormats(): Set<SearchFormatId> {
+  return new Set(SEARCH_FORMATS.map(({ id }) => id));
+}
+
+function isSearchFormatId(value: string): value is SearchFormatId {
+  return SEARCH_FORMATS.some(({ id }) => id === value);
+}
+
+function readSearchFormats(): Set<SearchFormatId> {
+  try {
+    const stored = window.localStorage.getItem(SEARCH_FORMAT_STORAGE_KEY);
+    if (stored === null) return allSearchFormats();
+    const enabled = new Set<SearchFormatId>();
+    for (const value of stored === '' ? [] : stored.split(',')) {
+      if (!isSearchFormatId(value)) return allSearchFormats();
+      enabled.add(value);
+    }
+    return enabled;
+  } catch {
+    return allSearchFormats();
+  }
+}
+
+function persistSearchFormats(enabled: ReadonlySet<SearchFormatId>): void {
+  try {
+    window.localStorage.setItem(
+      SEARCH_FORMAT_STORAGE_KEY,
+      SEARCH_FORMATS.filter(({ id }) => enabled.has(id)).map(({ id }) => id).join(','),
+    );
+  } catch {
+    // The current selection still works for this launch.
+  }
+}
+
+function selectedSearchExtensions(enabled: ReadonlySet<SearchFormatId>): string[] {
+  return SEARCH_FORMATS
+    .filter(({ id }) => enabled.has(id))
+    .flatMap(({ extensions }) => [...extensions]);
 }
 
 function markImageUnavailable(image: HTMLImageElement): void {
@@ -457,6 +512,7 @@ export async function createApp(
   bridge: DesktopBridge,
 ): Promise<void> {
   document.documentElement.dataset.theme = readThemePreference();
+  const enabledSearchFormats = readSearchFormats();
   const tabs: OpenTab[] = [];
   const history: NavigationEntry[] = [];
   let historyIndex = -1;
@@ -1467,19 +1523,94 @@ export async function createApp(
     });
 
     row.append(label, select);
-    dialog.append(header, row);
+
+    const searchSection = document.createElement('section');
+    searchSection.className = 'settings-section';
+    searchSection.setAttribute('aria-labelledby', 'search-file-types-title');
+    const searchHeader = document.createElement('div');
+    searchHeader.className = 'settings-section-header';
+    const searchCopy = document.createElement('div');
+    const searchTitle = document.createElement('h3');
+    searchTitle.id = 'search-file-types-title';
+    searchTitle.textContent = 'File search';
+    const searchDescription = document.createElement('p');
+    searchDescription.textContent = 'File types shown in ⌘P';
+    searchCopy.append(searchTitle, searchDescription);
+    const allLabel = document.createElement('label');
+    allLabel.className = 'settings-file-type settings-file-type-all';
+    const allToggle = document.createElement('input');
+    allToggle.type = 'checkbox';
+    allToggle.dataset.searchFormatAll = '';
+    const allText = document.createElement('strong');
+    allText.textContent = 'All supported';
+    allLabel.append(allToggle, allText);
+    searchHeader.append(searchCopy, allLabel);
+
+    const formatList = document.createElement('div');
+    formatList.className = 'settings-file-types';
+    const formatInputs = new Map<SearchFormatId, HTMLInputElement>();
+    for (const format of SEARCH_FORMATS) {
+      const formatLabel = document.createElement('label');
+      formatLabel.className = 'settings-file-type';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.name = 'search-format';
+      input.value = format.id;
+      input.dataset.searchFormat = format.id;
+      const copy = document.createElement('span');
+      const name = document.createElement('strong');
+      name.textContent = format.label;
+      const extensions = document.createElement('small');
+      extensions.textContent = format.extensions.map((extension) => `.${extension}`).join(' ');
+      copy.append(name, extensions);
+      formatLabel.append(input, copy);
+      formatList.append(formatLabel);
+      formatInputs.set(format.id, input);
+    }
+
+    const syncSearchFormatControls = () => {
+      allToggle.checked = enabledSearchFormats.size === SEARCH_FORMATS.length;
+      allToggle.indeterminate = enabledSearchFormats.size > 0
+        && enabledSearchFormats.size < SEARCH_FORMATS.length;
+      for (const [id, input] of formatInputs) input.checked = enabledSearchFormats.has(id);
+    };
+    const saveSearchFormats = () => {
+      persistSearchFormats(enabledSearchFormats);
+      syncSearchFormatControls();
+    };
+    allToggle.addEventListener('change', () => {
+      enabledSearchFormats.clear();
+      if (allToggle.checked) SEARCH_FORMATS.forEach(({ id }) => enabledSearchFormats.add(id));
+      saveSearchFormats();
+    });
+    for (const [id, input] of formatInputs) {
+      input.addEventListener('change', () => {
+        if (input.checked) enabledSearchFormats.add(id);
+        else enabledSearchFormats.delete(id);
+        saveSearchFormats();
+      });
+    }
+    syncSearchFormatControls();
+    searchSection.append(searchHeader, formatList);
+
+    dialog.append(header, row, searchSection);
     dialog.addEventListener('cancel', (event) => {
       event.preventDefault();
       closeSettings();
     });
     dialog.addEventListener('keydown', (event) => {
       if (event.key !== 'Tab') return;
-      if (event.shiftKey && document.activeElement === close) {
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), select:not([disabled]), input:not([disabled])',
+      ));
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
-        select.focus();
-      } else if (!event.shiftKey && document.activeElement === select) {
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
         event.preventDefault();
-        close.focus();
+        first?.focus();
       }
     });
     overlay.addEventListener('click', (event) => {
@@ -1518,6 +1649,7 @@ export async function createApp(
     const returnFocus = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : undefined;
+    const extensions = selectedSearchExtensions(enabledSearchFormats);
 
     const surface = document.createElement('section');
     surface.className = 'file-quick-open';
@@ -1602,12 +1734,16 @@ export async function createApp(
         renderMessage('Type a file name.');
         return;
       }
+      if (extensions.length === 0) {
+        renderMessage('Enable file types in Settings.');
+        return;
+      }
       renderMessage('Searching…');
       searchQueue = searchQueue.then(async () => {
         if (request !== revision) return;
         const refresh = refreshPending;
         try {
-          const paths = await bridge.searchDocuments(query, refresh);
+          const paths = await bridge.searchDocuments(query, refresh, extensions);
           if (refresh) refreshPending = false;
           if (request === revision) renderResults(paths);
         } catch {
@@ -1662,7 +1798,9 @@ export async function createApp(
     };
     surface.append(input, list);
     root.append(surface);
-    renderMessage('Type a file name.');
+    renderMessage(extensions.length === 0
+      ? 'Enable file types in Settings.'
+      : 'Type a file name.');
     window.addEventListener('pointerdown', closeOnOutsidePointer, true);
     fileSearchCleanup = () => {
       revision += 1;

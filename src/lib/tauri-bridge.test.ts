@@ -135,11 +135,12 @@ describe('createTauriBridge', () => {
   it('passes the cache refresh contract to native document search', async () => {
     tauri.invoke.mockResolvedValue(['/tmp/readme.md']);
 
-    await expect(createTauriBridge().searchDocuments('read', true))
+    await expect(createTauriBridge().searchDocuments('read', true, ['md', 'markdown']))
       .resolves.toEqual(['/tmp/readme.md']);
     expect(tauri.invoke).toHaveBeenCalledWith('search_documents', {
       query: 'read',
       refresh: true,
+      extensions: ['md', 'markdown'],
     });
   });
 

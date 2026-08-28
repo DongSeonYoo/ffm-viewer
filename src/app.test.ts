@@ -6,6 +6,11 @@ import type {
   ScratchRecovery,
 } from './lib/desktop-bridge';
 
+const ALL_SEARCH_EXTENSIONS = [
+  'md', 'markdown', 'json', 'txt', 'yaml', 'yml', 'toml',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
+] as const;
+
 function markdownDocument(content = '# Read me'): DocumentPayload {
   return {
     path: '/tmp/readme.md',
@@ -1033,7 +1038,9 @@ describe('createApp', () => {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
-    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('read', true));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+      'read', true, ALL_SEARCH_EXTENSIONS,
+    ));
     await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
     expect(document.querySelector('[role="tab"]')?.textContent).toContain('config.json');
   });
@@ -1124,13 +1131,17 @@ describe('createApp', () => {
 
     input.value = 'a';
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('a', true));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+      'a', true, expect.any(Array),
+    ));
     input.value = 'new';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await new Promise((resolve) => window.setTimeout(resolve, 100));
     expect(bridge.searchDocuments).toHaveBeenCalledTimes(1);
     resolveFirst(['/tmp/older.md']);
-    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('new', false));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+      'new', false, expect.any(Array),
+    ));
     await vi.waitFor(() => expect(document.body.textContent).toContain('newer.md'));
 
     expect(document.body.textContent).not.toContain('older.md');
@@ -1144,7 +1155,9 @@ describe('createApp', () => {
       const input = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
       input.value = query;
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(query, refresh));
+      await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+        query, refresh, expect.any(Array),
+      ));
     };
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
@@ -1168,13 +1181,17 @@ describe('createApp', () => {
     const input = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
     input.value = 'first';
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('first', true));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+      'first', true, expect.any(Array),
+    ));
     await vi.waitFor(() => expect(document.body.textContent).toContain('File search is unavailable.'));
 
     input.value = 'retry';
     input.dispatchEvent(new Event('input', { bubbles: true }));
 
-    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('retry', true));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+      'retry', true, expect.any(Array),
+    ));
   });
 
   it('opens current-document search with Cmd+F when CodeMirror is not focused', async () => {
@@ -1378,8 +1395,12 @@ describe('createApp', () => {
     expect(document.querySelector('dialog[data-settings]')).not.toBeNull();
     const select = document.querySelector<HTMLSelectElement>('[name="theme"]')!;
     expect(select.value).toBe('green');
-    select.focus();
-    select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    const formatInputs = Array.from(document.querySelectorAll<HTMLInputElement>(
+      '[name="search-format"]',
+    ));
+    const lastFormat = formatInputs.at(-1)!;
+    lastFormat.focus();
+    lastFormat.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     expect(document.activeElement).toBe(
       document.querySelector<HTMLButtonElement>('[aria-label="Close Settings"]'),
     );
@@ -1388,7 +1409,7 @@ describe('createApp', () => {
       shiftKey: true,
       bubbles: true,
     }));
-    expect(document.activeElement).toBe(select);
+    expect(document.activeElement).toBe(lastFormat);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(document.querySelector('[data-settings]')).toBeNull();
     expect(document.activeElement).toBe(opener);
@@ -1430,6 +1451,52 @@ describe('createApp', () => {
     }));
 
     expect(document.querySelector('[data-settings]')).toBeNull();
+  });
+
+  it('persists Cmd+P file type filters and sends only enabled extensions', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ',', code: 'Comma', metaKey: true,
+    }));
+
+    const all = document.querySelector<HTMLInputElement>('[data-search-format-all]')!;
+    const formats = Array.from(document.querySelectorAll<HTMLInputElement>(
+      '[name="search-format"]',
+    ));
+    expect(formats).toHaveLength(11);
+    expect(all.checked).toBe(true);
+    expect(formats.every(({ checked }) => checked)).toBe(true);
+
+    all.click();
+    expect(formats.every(({ checked }) => !checked)).toBe(true);
+    expect(window.localStorage.getItem('ffm.searchFormats')).toBe('');
+    all.click();
+    expect(formats.every(({ checked }) => checked)).toBe(true);
+
+    document.querySelector<HTMLInputElement>('[data-search-format="json"]')!.click();
+    expect(all.checked).toBe(false);
+    expect(all.indeterminate).toBe(true);
+
+    document.body.innerHTML = '<div id="app"></div>';
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: ',', code: 'Comma', metaKey: true,
+    }));
+    expect(document.querySelector<HTMLInputElement>('[data-search-format="json"]')?.checked)
+      .toBe(false);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
+    input.value = 'config';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+      'config',
+      true,
+      ALL_SEARCH_EXTENSIONS.filter((extension) => extension !== 'json'),
+    ));
   });
 
   it('disables writing assistance in every app search input', async () => {
