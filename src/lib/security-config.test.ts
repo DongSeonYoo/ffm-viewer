@@ -35,6 +35,7 @@ describe('desktop CSP', () => {
       'core:default',
       'core:window:allow-close',
       'core:window:allow-hide',
+      'core:window:allow-start-dragging',
       'dialog:allow-open',
       'dialog:allow-save',
       'dialog:allow-message',
@@ -54,5 +55,9 @@ describe('desktop CSP', () => {
     ]);
     expect(tauriConfig.app.windows[0]?.devtools).toBe(false);
     expect(betaConfig.app.windows[0]?.devtools).toBe(false);
+    for (const config of [tauriConfig, betaConfig, devConfig]) {
+      expect(config.app.windows[0]?.titleBarStyle).toBe('Overlay');
+      expect(config.app.windows[0]?.hiddenTitle).toBe(true);
+    }
   });
 });

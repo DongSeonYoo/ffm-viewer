@@ -233,12 +233,19 @@ test('Ctrl+B toggles the sidebar and Cmd+Z navigates actions', async ({ page }) 
 });
 
 test('Cmd+P searches filenames and opens the keyboard-selected result', async ({ page }) => {
+  await page.setViewportSize({ width: 540, height: 420 });
   await page.goto('/?fixture=multi');
 
   await page.keyboard.press('Meta+p');
   await expect(page.locator('.file-quick-open')).toBeVisible();
+  await expect(page.locator('.command-center-slot > .file-quick-open')).toBeVisible();
   await expect(page.locator('[data-quick-switcher]')).toHaveCount(0);
   expect((await page.locator('.file-quick-open').boundingBox())?.y).toBeLessThan(40);
+  const inputBounds = await page.locator('[data-file-search-input]').boundingBox();
+  const listBounds = await page.locator('#file-quick-open-results').boundingBox();
+  expect(listBounds?.y).toBeGreaterThanOrEqual(
+    (inputBounds?.y ?? 0) + (inputBounds?.height ?? 0),
+  );
   await page.getByRole('button', { name: 'Open document', exact: true }).click();
   await expect(page.locator('.file-quick-open')).toHaveCount(0);
   await expect(page.getByRole('tab')).toHaveCount(2);

@@ -549,6 +549,7 @@ export async function createApp(
   shell.className = 'app-shell';
   const topbar = document.createElement('header');
   topbar.className = 'app-topbar';
+  topbar.dataset.tauriDragRegion = '';
   const historyNav = document.createElement('nav');
   historyNav.className = 'history-navigation';
   historyNav.setAttribute('aria-label', 'Navigation history');
@@ -567,17 +568,20 @@ export async function createApp(
   forward.title = 'Go forward (⇧⌘Z)';
   forward.textContent = '→';
   historyNav.append(back, forward);
+  const commandCenterSlot = document.createElement('div');
+  commandCenterSlot.className = 'command-center-slot';
   const commandCenter = document.createElement('button');
   commandCenter.type = 'button';
   commandCenter.className = 'command-center';
   commandCenter.innerHTML = '<span aria-hidden="true">⌕</span><span>Search files on this Mac…</span><kbd>⌘P</kbd>';
+  commandCenterSlot.append(commandCenter);
   const openButton = document.createElement('button');
   openButton.type = 'button';
   openButton.className = 'toolbar-button';
   openButton.setAttribute('aria-label', 'Open document');
   openButton.title = 'Open document (⌘O)';
   openButton.textContent = '+';
-  topbar.append(historyNav, commandCenter, openButton);
+  topbar.append(historyNav, commandCenterSlot, openButton);
 
   const layout = document.createElement('div');
   layout.className = 'app-layout';
@@ -1639,6 +1643,7 @@ export async function createApp(
     fileSearchCleanup?.();
     fileSearchCleanup = undefined;
     root.querySelector('[data-file-search]')?.remove();
+    commandCenter.hidden = false;
   };
 
   const openFileSearch = () => {
@@ -1650,6 +1655,7 @@ export async function createApp(
       ? document.activeElement
       : undefined;
     const extensions = selectedSearchExtensions(enabledSearchFormats);
+    commandCenter.hidden = true;
 
     const surface = document.createElement('section');
     surface.className = 'file-quick-open';
@@ -1797,7 +1803,7 @@ export async function createApp(
       if (event.target instanceof Node && !surface.contains(event.target)) closeFileSearch();
     };
     surface.append(input, list);
-    root.append(surface);
+    commandCenterSlot.append(surface);
     renderMessage(extensions.length === 0
       ? 'Enable file types in Settings.'
       : 'Type a file name.');

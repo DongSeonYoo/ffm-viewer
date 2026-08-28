@@ -10,6 +10,7 @@ const MAX_RESULTS: usize = 100;
 struct Candidate {
     path: String,
     basename: String,
+    parent: String,
 }
 
 struct CachedCandidates {
@@ -86,7 +87,11 @@ fn include_entry(entry: &DirEntry) -> bool {
     })
 }
 
-fn candidate(entry: &DirEntry, extensions: &[String]) -> Option<Candidate> {
+fn normalize_path_token(value: &str) -> String {
+    value.nfc().flat_map(char::to_lowercase).collect()
+}
+
+fn candidate(entry: &DirEntry, root: &Path, extensions: &[String]) -> Option<Candidate> {
     if !entry
         .file_type()
         .is_some_and(|file_type| file_type.is_file())
@@ -104,7 +109,13 @@ fn candidate(entry: &DirEntry, extensions: &[String]) -> Option<Candidate> {
     }
     let path = entry.path().to_str()?.to_owned();
     let basename = entry.file_name().to_str()?.nfc().collect();
-    Some(Candidate { path, basename })
+    let parent = entry.path().parent()?;
+    let parent = normalize_path_token(parent.strip_prefix(root).unwrap_or(parent).to_str()?);
+    Some(Candidate {
+        path,
+        basename,
+        parent,
+    })
 }
 
 fn collect_candidates(root: &Path, extensions: &[String]) -> Vec<Candidate> {
@@ -122,7 +133,7 @@ fn collect_candidates(root: &Path, extensions: &[String]) -> Vec<Candidate> {
         };
         Box::new(move |entry| {
             if let Ok(entry) = entry {
-                if let Some(candidate) = candidate(&entry, extensions) {
+                if let Some(candidate) = candidate(&entry, root, extensions) {
                     collector.push(candidate);
                 }
             }
@@ -136,11 +147,32 @@ fn collect_candidates(root: &Path, extensions: &[String]) -> Vec<Candidate> {
 }
 
 fn match_candidates(candidates: &[Candidate], query: &str) -> Vec<String> {
+    let mut tokens = query.split_whitespace();
+    let Some(basename_query) = tokens.next() else {
+        return Vec::new();
+    };
+    let path_tokens = tokens.map(normalize_path_token).collect::<Vec<_>>();
     let config = Config::default()
         .max_typos(Some(0))
         .casing(CaseMatching::Ignore);
-    Matcher::new(query, &config)
-        .match_list(candidates)
+    if path_tokens.is_empty() {
+        return Matcher::new(basename_query, &config)
+            .match_list(candidates)
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|matched| candidates[matched.index as usize].path.clone())
+            .collect();
+    }
+    let candidates = candidates
+        .iter()
+        .filter(|candidate| {
+            path_tokens
+                .iter()
+                .all(|token| candidate.parent.contains(token))
+        })
+        .collect::<Vec<_>>();
+    Matcher::new(basename_query, &config)
+        .match_list(&candidates)
         .into_iter()
         .take(MAX_RESULTS)
         .map(|matched| candidates[matched.index as usize].path.clone())
@@ -345,6 +377,29 @@ mod tests {
             search(&SearchState::default(), &fixture.root, "dusrsc", true),
             vec![expected.to_string_lossy()]
         );
+    }
+
+    #[test]
+    fn filters_fuzzy_file_names_by_every_parent_path_token() {
+        let fixture = Fixture::new();
+        fixture.file("bysuco/api/file.entity.json");
+        let expected = fixture.file("NovaID/문서/packages/file.entity.json");
+        fixture.file("obd/Dwitter/api/file.entity.json");
+
+        assert_eq!(
+            search(&SearchState::default(), &fixture.root, "fileent nov", true),
+            vec![expected.to_string_lossy()]
+        );
+        assert_eq!(
+            search(
+                &SearchState::default(),
+                &fixture.root,
+                "fileent nov 문서 packages",
+                true
+            ),
+            vec![expected.to_string_lossy()]
+        );
+        assert!(search(&SearchState::default(), &fixture.root, "fileent tmp", true).is_empty());
     }
 
     #[test]

@@ -1051,8 +1051,11 @@ describe('createApp', () => {
     const commandCenter = document.querySelector<HTMLButtonElement>('.command-center')!;
 
     expect(commandCenter.textContent).toContain('⌘P');
+    expect(document.querySelector('.app-topbar')?.hasAttribute('data-tauri-drag-region'))
+      .toBe(true);
     commandCenter.click();
     expect(document.querySelector('[data-file-search-input]')).not.toBeNull();
+    expect(commandCenter.hidden).toBe(true);
 
     document.querySelector<HTMLElement>('.app-sidebar')?.dispatchEvent(new Event(
       'pointerdown',
@@ -1060,6 +1063,7 @@ describe('createApp', () => {
     ));
 
     expect(document.querySelector('[data-file-search]')).toBeNull();
+    expect(commandCenter.hidden).toBe(false);
   });
 
   it('opens Mac file search from the native menu request', async () => {
