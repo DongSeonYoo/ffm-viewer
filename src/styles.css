@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
     "Noto Sans KR", "Noto Sans CJK KR", sans-serif;
@@ -7,6 +7,33 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
+  --page: #171a19;
+  --surface: #202422;
+  --surface-strong: #2a302d;
+  --ink: #e7ebe8;
+  --ink-soft: #99a39e;
+  --line: #323834;
+  --line-strong: #48504c;
+  --accent: #63e6be;
+  --accent-soft: #163d32;
+  --selection: #245f4c;
+  --code-comment: #85918b;
+  --code-keyword: #e397df;
+  --code-string: #9ad5af;
+  --code-number: #e2b47b;
+  --code-function: #8fc6ff;
+  --code-punctuation: #c4ccc8;
+  --json-key: var(--code-function);
+  --json-string: var(--code-string);
+  --json-number: var(--code-number);
+  --json-boolean: var(--code-keyword);
+  --json-null: var(--code-comment);
+  --danger: #ff8787;
+}
+
+:root[data-theme='light'],
+:root[data-theme='system'] {
+  color-scheme: light;
   --page: #fcfcfa;
   --surface: #f3f5f4;
   --surface-strong: #e9eeeb;
@@ -23,16 +50,12 @@
   --code-number: #9a5b13;
   --code-function: #145ea8;
   --code-punctuation: #4d5752;
-  --json-key: var(--code-function);
-  --json-string: var(--code-string);
-  --json-number: var(--code-number);
-  --json-boolean: var(--code-keyword);
-  --json-null: var(--code-comment);
   --danger: #c53b3b;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root[data-theme='system'] {
+    color-scheme: dark;
     --page: #171a19;
     --surface: #202422;
     --surface-strong: #2a302d;
@@ -590,6 +613,80 @@ a:focus-visible {
 .quick-switcher-item.is-active {
   background: var(--accent-soft);
   color: var(--ink);
+}
+
+.settings-overlay {
+  position: fixed;
+  z-index: 55;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #05080699;
+  padding: 20px;
+  backdrop-filter: blur(5px);
+}
+
+.settings-panel {
+  width: min(560px, calc(100vw - 40px));
+  margin: auto;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 28px 90px #000b;
+  padding: 0;
+}
+
+.settings-panel::backdrop {
+  background: transparent;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding: 18px 20px 16px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+}
+
+.settings-close {
+  font-size: 1.2rem;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 20px 20px;
+}
+
+.settings-row label {
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.settings-row select {
+  min-width: 150px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--ink);
+  cursor: pointer;
+  padding: 7px 9px;
+}
+
+.settings-row select:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .open-document {
