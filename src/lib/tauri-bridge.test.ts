@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tauri = vi.hoisted(() => ({
+  close: vi.fn(),
   closeHandler: undefined as ((event: { preventDefault(): void }) => Promise<void>) | undefined,
   destroy: vi.fn(),
   eventHandlers: new Map<string, () => void>(),
+  hide: vi.fn(),
   invoke: vi.fn(),
   listen: vi.fn(),
   message: vi.fn(),
@@ -17,7 +19,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: tauri.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: tauri.listen }));
 vi.mock('@tauri-apps/api/webviewWindow', () => ({
   getCurrentWebviewWindow: () => ({
+    close: tauri.close,
     destroy: tauri.destroy,
+    hide: tauri.hide,
     onCloseRequested: tauri.onCloseRequested,
     onDragDropEvent: vi.fn(async () => vi.fn()),
   }),
@@ -136,7 +140,7 @@ describe('createTauriBridge', () => {
     expect(tauri.invoke).toHaveBeenCalledWith('search_documents', { query: 'read' });
   });
 
-  it('prevents native close and destroys the window only after approval', async () => {
+  it('prevents native close and hides the window without quitting', async () => {
     const preventDefault = vi.fn();
     const approve = vi.fn().mockResolvedValue(true);
     await createTauriBridge().onCloseRequested(approve);
@@ -144,23 +148,14 @@ describe('createTauriBridge', () => {
     await tauri.closeHandler?.({ preventDefault });
 
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(approve).toHaveBeenCalledOnce();
-    expect(tauri.destroy).toHaveBeenCalledOnce();
+    expect(approve).not.toHaveBeenCalled();
+    expect(tauri.hide).toHaveBeenCalledOnce();
   });
 
-  it('rejects close and ignores a re-entrant request while confirmation is open', async () => {
-    const decision = deferred<boolean>();
-    const approve = vi.fn(() => decision.promise);
-    await createTauriBridge().onCloseRequested(approve);
-    const event = { preventDefault: vi.fn() };
+  it('requests the native close-window path', async () => {
+    await createTauriBridge().closeWindow();
 
-    const first = tauri.closeHandler?.(event);
-    await tauri.closeHandler?.(event);
-    decision.resolve(false);
-    await first;
-
-    expect(approve).toHaveBeenCalledOnce();
-    expect(tauri.destroy).not.toHaveBeenCalled();
+    expect(tauri.close).toHaveBeenCalledOnce();
   });
 
   it('exits for an approved quit request and stays open when rejected', async () => {

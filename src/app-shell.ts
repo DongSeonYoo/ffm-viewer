@@ -21,6 +21,7 @@ let activePasteListener: ((event: ClipboardEvent) => void) | undefined;
 const IMAGE_CONCURRENCY = 3;
 const MAX_IMAGE_DATA_CHARS = 24 * 1024 * 1024;
 const MAX_HISTORY = 100;
+const MAX_DOCUMENT_MATCHES = 500;
 const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
 const RECOVERY_WARNING = 'Recovery unavailable. Keep this tab open or save it to a file.';
 const THEME_STORAGE_KEY = 'ffm.theme';
@@ -172,6 +173,36 @@ function kindLabel(payload: DocumentPayload): string {
   }
 }
 
+function fileName(path: string): string {
+  return path.split('/').pop() || path;
+}
+
+function fileType(path: string): string {
+  const extension = fileName(path).split('.').pop();
+  return extension?.toLocaleUpperCase() ?? 'FILE';
+}
+
+function findTextRanges(container: HTMLElement, query: string): Range[] {
+  const ranges: Range[] = [];
+  const needle = query.toLocaleLowerCase();
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node && ranges.length < MAX_DOCUMENT_MATCHES; node = walker.nextNode()) {
+    const text = node.textContent ?? '';
+    const haystack = text.toLocaleLowerCase();
+    let offset = 0;
+    while (ranges.length < MAX_DOCUMENT_MATCHES) {
+      const index = haystack.indexOf(needle, offset);
+      if (index < 0) break;
+      const range = document.createRange();
+      range.setStart(node, index);
+      range.setEnd(node, index + query.length);
+      ranges.push(range);
+      offset = index + Math.max(query.length, 1);
+    }
+  }
+  return ranges;
+}
+
 function createSidebarSection(name: string, countName: string) {
   const section = document.createElement('section');
   section.className = 'sidebar-section';
@@ -302,6 +333,11 @@ export async function createApp(
     outlineObserver = undefined;
     activeCodeView?.destroy();
     activeCodeView = undefined;
+  };
+
+  const closeDocumentSearch = () => {
+    root.querySelector('[data-document-search]')?.remove();
+    window.getSelection()?.removeAllRanges();
   };
 
   const updateHistoryButtons = () => {
@@ -475,6 +511,7 @@ export async function createApp(
   };
 
   const renderActive = () => {
+    closeDocumentSearch();
     destroyActiveView();
     outlineSection.content.replaceChildren();
     outlineSection.count.textContent = '0';
@@ -796,17 +833,33 @@ export async function createApp(
     return persistDirtyScratches(tab, tab.id);
   }
 
+  const requestCloseWindow = () => {
+    void bridge.closeWindow().catch(() => {
+      startupWarning = 'The window could not be closed.';
+      renderWarning();
+    });
+  };
+
   function closeTab(id: string): void {
     const tab = tabs.find((candidate) => candidate.id === id);
     if (!tab) return;
-    if (!tab.dirty) {
+    const finish = () => {
       removeTab(id);
+      if (tabs.length === 0) requestCloseWindow();
+    };
+    if (!tab.dirty) {
+      finish();
       return;
     }
     void canCloseTab(tab).then((canClose) => {
-      if (canClose) removeTab(id);
+      if (canClose) finish();
     });
   }
+
+  const closeActiveTabOrWindow = () => {
+    if (activeId) closeTab(activeId);
+    else requestCloseWindow();
+  };
 
   async function canCloseWindow(): Promise<boolean> {
     for (const tab of tabs) {
@@ -899,6 +952,7 @@ export async function createApp(
 
   const openSettings = () => {
     closeQuickSwitcher();
+    closeFileSearch();
     closeSettings();
     settingsReturnFocus = document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -970,8 +1024,210 @@ export async function createApp(
     requestAnimationFrame(() => select.focus());
   };
 
+  let fileSearchCleanup: (() => void) | undefined;
+  const closeFileSearch = () => {
+    fileSearchCleanup?.();
+    fileSearchCleanup = undefined;
+    root.querySelector('[data-file-search]')?.remove();
+  };
+
+  const openFileSearch = () => {
+    closeSettings();
+    closeQuickSwitcher();
+    closeFileSearch();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'quick-switcher';
+    overlay.dataset.fileSearch = '';
+    const box = document.createElement('section');
+    box.className = 'quick-switcher-box';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Search files on this Mac');
+    const input = document.createElement('input');
+    input.className = 'quick-switcher-input';
+    input.dataset.fileSearchInput = '';
+    input.placeholder = 'Search supported files…';
+    const list = document.createElement('div');
+    list.className = 'quick-switcher-list';
+    let timer: number | undefined;
+    let revision = 0;
+    let activeIndex = 0;
+
+    const updateActiveResult = (nextIndex: number) => {
+      const items = Array.from(list.querySelectorAll<HTMLElement>('[data-file-search-result]'));
+      if (items.length === 0) return;
+      activeIndex = (nextIndex + items.length) % items.length;
+      items.forEach((item, index) => item.classList.toggle('is-active', index === activeIndex));
+      items[activeIndex]?.scrollIntoView?.({ block: 'nearest' });
+    };
+
+    const renderMessage = (message: string) => {
+      list.replaceChildren();
+      const empty = document.createElement('p');
+      empty.className = 'quick-switcher-empty';
+      empty.textContent = message;
+      list.append(empty);
+    };
+
+    const openResult = (path: string) => {
+      closeFileSearch();
+      void queueDocument(path);
+    };
+
+    const renderResults = (paths: readonly string[]) => {
+      list.replaceChildren();
+      activeIndex = 0;
+      if (paths.length === 0) {
+        renderMessage('No supported files found.');
+        return;
+      }
+      for (const [index, path] of paths.entries()) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = `quick-switcher-item file-search-result${index === 0 ? ' is-active' : ''}`;
+        item.dataset.fileSearchResult = path;
+        const type = document.createElement('span');
+        type.className = 'document-type';
+        type.textContent = fileType(path);
+        const copy = document.createElement('span');
+        copy.className = 'file-search-copy';
+        const name = document.createElement('strong');
+        name.textContent = fileName(path);
+        const location = document.createElement('small');
+        location.textContent = path;
+        copy.append(name, location);
+        item.append(type, copy);
+        item.addEventListener('click', () => openResult(path));
+        list.append(item);
+      }
+    };
+
+    const search = async () => {
+      const query = input.value.trim();
+      const request = ++revision;
+      if (!query) {
+        renderMessage('Type a file name.');
+        return;
+      }
+      renderMessage('Searching…');
+      try {
+        const paths = await bridge.searchDocuments(query);
+        if (request === revision) renderResults(paths);
+      } catch {
+        if (request === revision) renderMessage('File search is unavailable.');
+      }
+    };
+
+    input.addEventListener('input', () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void search(), 60);
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeFileSearch();
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        updateActiveResult(activeIndex + (event.key === 'ArrowDown' ? 1 : -1));
+      }
+      if (event.key === 'Enter') {
+        const items = list.querySelectorAll<HTMLElement>('[data-file-search-result]');
+        const path = items[activeIndex]?.dataset.fileSearchResult;
+        if (path) openResult(path);
+      }
+    });
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) closeFileSearch();
+    });
+    box.append(input, list);
+    overlay.append(box);
+    root.append(overlay);
+    renderMessage('Type a file name.');
+    fileSearchCleanup = () => {
+      revision += 1;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+    requestAnimationFrame(() => input.focus());
+  };
+
+  const openCurrentDocumentSearch = () => {
+    closeSettings();
+    closeQuickSwitcher();
+    closeFileSearch();
+    closeDocumentSearch();
+    if (activeCodeView) {
+      activeCodeView.openSearch();
+      return;
+    }
+    const tab = activeTab();
+    const article = viewport.querySelector<HTMLElement>('.markdown-document');
+    if (!tab || tab.payload.kind !== 'markdown' || !article) return;
+
+    const searchBar = document.createElement('div');
+    searchBar.className = 'document-search';
+    searchBar.dataset.documentSearch = '';
+    const input = document.createElement('input');
+    input.dataset.documentSearchInput = '';
+    input.placeholder = 'Find in document';
+    input.setAttribute('aria-label', 'Find in document');
+    const count = document.createElement('span');
+    count.className = 'document-search-count';
+    count.textContent = '0/0';
+    const previous = document.createElement('button');
+    previous.type = 'button';
+    previous.setAttribute('aria-label', 'Previous match');
+    previous.textContent = '↑';
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.setAttribute('aria-label', 'Next match');
+    next.textContent = '↓';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Close document search');
+    close.textContent = '×';
+    let ranges: Range[] = [];
+    let rangeIndex = -1;
+    let lastQuery = '';
+
+    const showMatch = (direction: number) => {
+      const query = input.value;
+      if (query !== lastQuery) {
+        lastQuery = query;
+        ranges = query ? findTextRanges(article, query) : [];
+        rangeIndex = -1;
+      }
+      if (ranges.length === 0) {
+        window.getSelection()?.removeAllRanges();
+        count.textContent = '0/0';
+        return;
+      }
+      rangeIndex = (rangeIndex + direction + ranges.length) % ranges.length;
+      const range = ranges[rangeIndex];
+      if (!range) return;
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      range.startContainer.parentElement?.scrollIntoView?.({ block: 'center' });
+      count.textContent = `${rangeIndex + 1}/${ranges.length}`;
+    };
+
+    input.addEventListener('input', () => showMatch(1));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeDocumentSearch();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        showMatch(event.shiftKey ? -1 : 1);
+      }
+    });
+    previous.addEventListener('click', () => showMatch(-1));
+    next.addEventListener('click', () => showMatch(1));
+    close.addEventListener('click', closeDocumentSearch);
+    searchBar.append(input, count, previous, next, close);
+    workArea.append(searchBar);
+    requestAnimationFrame(() => input.focus());
+  };
+
   const openQuickSwitcher = () => {
     closeSettings();
+    closeFileSearch();
     closeQuickSwitcher();
     if (tabs.length === 0) return;
     const overlay = document.createElement('div');
@@ -1075,7 +1331,11 @@ export async function createApp(
   if (activeKeydownListener) window.removeEventListener('keydown', activeKeydownListener);
   activeKeydownListener = (event) => {
     const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'n') {
+    if (
+      modifier
+      && !event.altKey
+      && ['n', 't'].includes(event.key.toLocaleLowerCase())
+    ) {
       event.preventDefault();
       openScratch();
       return;
@@ -1088,6 +1348,26 @@ export async function createApp(
     if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'k') {
       event.preventDefault();
       openQuickSwitcher();
+      return;
+    }
+    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'p') {
+      event.preventDefault();
+      openFileSearch();
+      return;
+    }
+    if (modifier && !event.altKey && event.key.toLocaleLowerCase() === 'f') {
+      event.preventDefault();
+      openCurrentDocumentSearch();
+      return;
+    }
+    if (
+      event.ctrlKey
+      && !event.metaKey
+      && !event.altKey
+      && event.key.toLocaleLowerCase() === 'w'
+    ) {
+      event.preventDefault();
+      closeActiveTabOrWindow();
       return;
     }
     if (
@@ -1122,6 +1402,14 @@ export async function createApp(
       }
       if (root.querySelector('[data-quick-switcher]')) {
         closeQuickSwitcher();
+        return;
+      }
+      if (root.querySelector('[data-file-search]')) {
+        closeFileSearch();
+        return;
+      }
+      if (root.querySelector('[data-document-search]')) {
+        closeDocumentSearch();
         return;
       }
       const tab = activeTab();
@@ -1159,7 +1447,7 @@ export async function createApp(
     bridge.onOpenRequested((path) => void queueDocument(path)),
     bridge.onFileDropped((path) => void queueDocument(path)),
     bridge.onCloseActiveTab(() => {
-      if (activeId) closeTab(activeId);
+      closeActiveTabOrWindow();
     }),
     bridge.onCloseRequested(canCloseWindow),
   ]);

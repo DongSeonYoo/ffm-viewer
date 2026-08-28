@@ -6,7 +6,7 @@ import {
   syntaxHighlighting,
   syntaxTree,
 } from '@codemirror/language';
-import { search, searchKeymap } from '@codemirror/search';
+import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
@@ -46,6 +46,7 @@ interface OutlinePage {
 }
 
 export interface CodeViewElement extends HTMLElement {
+  openSearch(): void;
   destroy(): void;
 }
 
@@ -463,6 +464,7 @@ export function createJsonCodeView(source: string): CodeViewElement {
     destroyDiagnostics();
     view.destroy();
   };
+  wrapper.openSearch = () => openSearchPanel(view);
   return wrapper;
 }
 
@@ -490,5 +492,6 @@ export function createTextCodeView(source: string): CodeViewElement {
     destroyDiagnostics();
     view.destroy();
   };
+  wrapper.openSearch = () => openSearchPanel(view);
   return wrapper;
 }

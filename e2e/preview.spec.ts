@@ -46,8 +46,21 @@ test('JSON opens as formatted code with a key outline', async ({ page }) => {
   const source = await content.textContent();
   await content.press('a');
   await expect(content).toHaveText(source ?? '');
-  await content.press('Meta+f');
+  await page.getByRole('button', { name: /Search open files/ }).focus();
+  await page.keyboard.press('Meta+f');
   await expect(page.locator('.cm-search')).toBeVisible();
+});
+
+test('Cmd+F finds rendered Markdown text', async ({ page }) => {
+  await page.goto('/?fixture=markdown');
+
+  await page.keyboard.press('Meta+f');
+  const input = page.locator('[data-document-search-input]');
+  await input.fill('calm reading');
+  await input.press('Enter');
+
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('calm reading');
+  await expect(page.locator('.document-search-count')).toHaveText('1/1');
 });
 
 test('System theme follows macOS appearance without changing hierarchy', async ({
@@ -152,6 +165,19 @@ test('multiple files stay open and keyboard navigation wraps', async ({ page }) 
   await expect(page.locator('.json-code-view')).toBeVisible();
 });
 
+test('Cmd+P searches filenames and opens the keyboard-selected result', async ({ page }) => {
+  await page.goto('/?fixture=multi');
+
+  await page.keyboard.press('Meta+p');
+  const input = page.locator('[data-file-search-input]');
+  await input.fill('md');
+  await expect(page.locator('[data-file-search-result]')).toHaveCount(2);
+  await input.press('ArrowDown');
+  await input.press('Enter');
+
+  await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible();
+});
+
 for (const [fixture, label, content] of [
   ['text', 'TXT', 'Line two stays visible.'],
   ['yaml', 'YAML', 'port: 4000'],
@@ -178,7 +204,7 @@ test('images open inside the minimal image surface', async ({ page }) => {
 
 test('Scratch previews pasted Markdown and opens a new tab for the next paste', async ({ page }) => {
   await page.goto('/?fixture=markdown');
-  await page.keyboard.press('Meta+n');
+  await page.keyboard.press('Meta+t');
   await expect(page.getByRole('heading', { name: 'Paste content to preview' })).toBeVisible();
 
   await pasteText(page, '# Notion paste\n\n| key | value |\n| --- | --- |\n| speed | fast |');

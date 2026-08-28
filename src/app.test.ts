@@ -59,7 +59,9 @@ function createBridge(
   let closeHandler: (() => Promise<boolean>) | undefined;
   let closeTabHandler: (() => void) | undefined;
 
-  const bridge: DesktopBridge = {
+  const bridge: DesktopBridge & {
+    closeWindow: ReturnType<typeof vi.fn>;
+  } = {
     chooseDocuments: vi.fn().mockResolvedValue([]),
     readDocument: vi.fn(async (path: string) => {
       const document = documents[path];
@@ -90,6 +92,8 @@ function createBridge(
       closeTabHandler = handler;
       return () => undefined;
     }),
+    searchDocuments: vi.fn().mockResolvedValue([]),
+    closeWindow: vi.fn().mockResolvedValue(undefined),
   };
 
   return {
@@ -441,6 +445,136 @@ describe('createApp', () => {
 
     await vi.waitFor(() => expect(document.body.textContent).toContain('Readme'));
     expect(document.querySelector('[data-quick-switcher]')).toBeNull();
+  });
+
+  it('creates a new Scratch tab with Cmd+T', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', metaKey: true }));
+
+    expect(document.querySelector('[role="tab"]')?.textContent).toContain('Untitled 1');
+    expect(document.body.textContent).toContain('Paste content to preview');
+  });
+
+  it('searches supported files with Cmd+P and opens the keyboard-selected result', async () => {
+    const readme = markdownDocument('# Readme');
+    const data = jsonDocument('{"selected":true}');
+    const { bridge } = createBridge({ [readme.path]: readme, [data.path]: data });
+    vi.mocked(bridge.searchDocuments).mockResolvedValue([readme.path, data.path]);
+    await createApp(document.querySelector('#app')!, bridge);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
+    expect(input).not.toBeNull();
+    input.value = 'read';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('read'));
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[data-file-search-result]')).toHaveLength(2);
+    });
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
+    expect(document.querySelector('[role="tab"]')?.textContent).toContain('config.json');
+  });
+
+  it('keeps newer Cmd+P results when an older Spotlight request finishes late', async () => {
+    let resolveFirst!: (paths: readonly string[]) => void;
+    const first = new Promise<readonly string[]>((resolve) => { resolveFirst = resolve; });
+    const { bridge } = createBridge();
+    vi.mocked(bridge.searchDocuments).mockImplementation((query) => (
+      query === 'a' ? first : Promise.resolve(['/tmp/newer.md'])
+    ));
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
+
+    input.value = 'a';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith('a'));
+    input.value = 'new';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('newer.md'));
+    resolveFirst(['/tmp/older.md']);
+    await first;
+
+    expect(document.body.textContent).toContain('newer.md');
+    expect(document.body.textContent).not.toContain('older.md');
+  });
+
+  it('opens current-document search with Cmd+F when CodeMirror is not focused', async () => {
+    const payload = jsonDocument();
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true }));
+
+    await vi.waitFor(() => expect(document.querySelector('.cm-search')).not.toBeNull());
+  });
+
+  it('finds rendered Markdown text with Cmd+F', async () => {
+    const payload = markdownDocument('# Read me\n\nFind this sentence.');
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true }));
+    const input = document.querySelector<HTMLInputElement>('[data-document-search-input]')!;
+    expect(input).not.toBeNull();
+    input.value = 'Find this';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(window.getSelection()?.toString()).toBe('Find this');
+  });
+
+  it('closes one of several tabs with literal Ctrl+W without closing the window', async () => {
+    const first = markdownDocument('# First');
+    const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
+    const { bridge, requestOpen } = createBridge({ [first.path]: first, [second.path]: second });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(first.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('First'));
+    requestOpen(second.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second'));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(bridge.closeWindow).not.toHaveBeenCalled();
+  });
+
+  it('closes the window when Ctrl+W removes the last tab or no tab is open', async () => {
+    const payload = markdownDocument('# Only');
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Only'));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(1));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps a dirty last tab and window open when Ctrl+W is cancelled', async () => {
+    const { bridge } = createBridge();
+    vi.mocked(bridge.confirmClose).mockResolvedValue('cancel');
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', metaKey: true }));
+    pasteText('# Keep me');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
+
+    await vi.waitFor(() => expect(bridge.confirmClose).toHaveBeenCalled());
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(bridge.closeWindow).not.toHaveBeenCalled();
   });
 
   it('opens Settings with Cmd+, and defaults to FFM Green', async () => {

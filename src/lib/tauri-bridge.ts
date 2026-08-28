@@ -162,6 +162,10 @@ export function createTauriBridge(): DesktopBridge {
       return invoke<string[]>('search_documents', { query });
     },
 
+    closeWindow() {
+      return getCurrentWebviewWindow().close();
+    },
+
     async onCloseRequested(handler) {
       const window = getCurrentWebviewWindow();
       let handling = false;
@@ -176,7 +180,7 @@ export function createTauriBridge(): DesktopBridge {
       };
       const unlisten = await window.onCloseRequested(async (event) => {
         event.preventDefault();
-        if (await canClose()) await window.destroy();
+        await window.hide();
       });
       const unlistenQuit = await listen('quit-requested', () => {
         void canClose().then((approved) => {

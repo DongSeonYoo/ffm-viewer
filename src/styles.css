@@ -594,6 +594,14 @@ a:focus-visible {
   padding: 6px;
 }
 
+.quick-switcher-empty {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  padding: 16px 10px;
+  text-align: center;
+}
+
 .quick-switcher-item {
   display: flex;
   width: 100%;
@@ -612,6 +620,85 @@ a:focus-visible {
 .quick-switcher-item:hover,
 .quick-switcher-item.is-active {
   background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.file-search-result {
+  height: auto;
+  min-height: 46px;
+}
+
+.file-search-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.file-search-copy strong,
+.file-search-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-search-copy strong {
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.file-search-copy small {
+  color: var(--ink-soft);
+  font-size: 0.65rem;
+}
+
+.document-search {
+  position: absolute;
+  z-index: 20;
+  top: 46px;
+  right: 16px;
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px #0008;
+  padding: 3px;
+}
+
+.document-search input {
+  width: min(220px, 36vw);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  outline: 0;
+  padding: 0 7px;
+}
+
+.document-search-count {
+  min-width: 34px;
+  color: var(--ink-soft);
+  font: 0.64rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+
+.document-search button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.document-search button:hover {
+  background: var(--surface-strong);
   color: var(--ink);
 }
 

@@ -127,6 +127,7 @@ export function createBrowserPreviewBridge(
     searchDocuments: async (query) => payloads
       .filter(({ name }) => name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
       .map(({ path }) => path),
+    closeWindow: async () => undefined,
     onCloseActiveTab: async () => () => undefined,
     onCloseRequested: async () => () => undefined,
   };

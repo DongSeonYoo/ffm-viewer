@@ -28,9 +28,11 @@ describe('desktop CSP', () => {
     ]));
   });
 
-  it('grants only the native dialog permissions Scratch needs', () => {
+  it('grants only the window and dialog permissions the shell needs', () => {
     expect(capabilities.permissions).toEqual([
       'core:default',
+      'core:window:allow-close',
+      'core:window:allow-hide',
       'dialog:allow-open',
       'dialog:allow-save',
       'dialog:allow-message',

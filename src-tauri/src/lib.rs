@@ -23,6 +23,13 @@ impl ExitState {
     }
 }
 
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[tauri::command]
 fn exit_application(app: tauri::AppHandle, state: tauri::State<'_, ExitState>) {
     state.approve_exit();
@@ -39,10 +46,7 @@ pub fn run() {
             for argument in args.into_iter().skip(1) {
                 dispatch_or_queue(app, Path::new(&argument));
             }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -142,7 +146,13 @@ pub fn run() {
                     dispatch_or_queue(app, &path);
                 }
             }
+            show_main_window(app);
         }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } => show_main_window(app),
         tauri::RunEvent::ExitRequested { api, .. }
             if app.state::<ExitState>().should_prevent_exit() =>
         {
