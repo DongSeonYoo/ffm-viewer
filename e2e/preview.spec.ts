@@ -143,6 +143,21 @@ test('Settings remains visible when showModal is unavailable', async ({ page }) 
   expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 0);
 });
 
+test('Settings keeps every file type reachable at the minimum window size', async ({ page }) => {
+  await page.setViewportSize({ width: 540, height: 420 });
+  await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+,');
+
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+  const svg = page.getByRole('checkbox', { name: 'SVG .svg' });
+  await svg.scrollIntoViewIfNeeded();
+  await svg.click();
+  await expect(svg).not.toBeChecked();
+});
+
 test('Settings closes when its backdrop is clicked', async ({ page }) => {
   await page.goto('/?fixture=markdown');
   await page.keyboard.press('Meta+,');
@@ -218,12 +233,19 @@ test('Ctrl+B toggles the sidebar and Cmd+Z navigates actions', async ({ page }) 
 });
 
 test('Cmd+P searches filenames and opens the keyboard-selected result', async ({ page }) => {
+  await page.setViewportSize({ width: 540, height: 420 });
   await page.goto('/?fixture=multi');
 
   await page.keyboard.press('Meta+p');
   await expect(page.locator('.file-quick-open')).toBeVisible();
+  await expect(page.locator('.command-center-slot > .file-quick-open')).toBeVisible();
   await expect(page.locator('[data-quick-switcher]')).toHaveCount(0);
   expect((await page.locator('.file-quick-open').boundingBox())?.y).toBeLessThan(40);
+  const inputBounds = await page.locator('[data-file-search-input]').boundingBox();
+  const listBounds = await page.locator('#file-quick-open-results').boundingBox();
+  expect(listBounds?.y).toBeGreaterThanOrEqual(
+    (inputBounds?.y ?? 0) + (inputBounds?.height ?? 0),
+  );
   await page.getByRole('button', { name: 'Open document', exact: true }).click();
   await expect(page.locator('.file-quick-open')).toHaveCount(0);
   await expect(page.getByRole('tab')).toHaveCount(2);

@@ -158,8 +158,8 @@ export function createTauriBridge(): DesktopBridge {
       return queued;
     },
 
-    searchDocuments(query, refresh) {
-      return invoke<string[]>('search_documents', { query, refresh });
+    searchDocuments(query, refresh, extensions) {
+      return invoke<string[]>('search_documents', { query, refresh, extensions });
     },
 
     closeWindow() {

@@ -10,6 +10,12 @@ const MAX_RESULTS: usize = 100;
 struct Candidate {
     path: String,
     basename: String,
+    parent: String,
+}
+
+struct CachedCandidates {
+    extensions: Vec<String>,
+    candidates: Vec<Candidate>,
 }
 
 impl AsRef<str> for Candidate {
@@ -20,7 +26,7 @@ impl AsRef<str> for Candidate {
 
 #[derive(Clone, Default)]
 pub struct SearchState {
-    cache: Arc<Mutex<Option<Vec<Candidate>>>>,
+    cache: Arc<Mutex<Option<CachedCandidates>>>,
 }
 
 struct Collector<'a> {
@@ -53,6 +59,23 @@ fn validate_query(query: &str) -> Result<&str, String> {
     Ok(query)
 }
 
+fn normalize_extensions(mut extensions: Vec<String>) -> Result<Vec<String>, String> {
+    for extension in &mut extensions {
+        extension.make_ascii_lowercase();
+        if extension.is_empty()
+            || !extension
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+            || !crate::open_requests::is_supported_path(Path::new(&format!("file.{extension}")))
+        {
+            return Err(format!("Unsupported search extension: {extension}"));
+        }
+    }
+    extensions.sort_unstable();
+    extensions.dedup();
+    Ok(extensions)
+}
+
 fn include_entry(entry: &DirEntry) -> bool {
     if entry.depth() == 0 {
         return true;
@@ -64,20 +87,38 @@ fn include_entry(entry: &DirEntry) -> bool {
     })
 }
 
-fn candidate(entry: &DirEntry) -> Option<Candidate> {
+fn normalize_path_token(value: &str) -> String {
+    value.nfc().flat_map(char::to_lowercase).collect()
+}
+
+fn candidate(entry: &DirEntry, root: &Path, extensions: &[String]) -> Option<Candidate> {
     if !entry
         .file_type()
         .is_some_and(|file_type| file_type.is_file())
-        || !crate::open_requests::is_supported_path(entry.path())
+        || !entry
+            .path()
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| {
+                extensions
+                    .iter()
+                    .any(|selected| extension.eq_ignore_ascii_case(selected))
+            })
     {
         return None;
     }
     let path = entry.path().to_str()?.to_owned();
     let basename = entry.file_name().to_str()?.nfc().collect();
-    Some(Candidate { path, basename })
+    let parent = entry.path().parent()?;
+    let parent = normalize_path_token(parent.strip_prefix(root).unwrap_or(parent).to_str()?);
+    Some(Candidate {
+        path,
+        basename,
+        parent,
+    })
 }
 
-fn collect_candidates(root: &Path) -> Vec<Candidate> {
+fn collect_candidates(root: &Path, extensions: &[String]) -> Vec<Candidate> {
     let candidates = Mutex::new(Vec::new());
     let mut builder = WalkBuilder::new(root);
     builder
@@ -92,7 +133,7 @@ fn collect_candidates(root: &Path) -> Vec<Candidate> {
         };
         Box::new(move |entry| {
             if let Ok(entry) = entry {
-                if let Some(candidate) = candidate(&entry) {
+                if let Some(candidate) = candidate(&entry, root, extensions) {
                     collector.push(candidate);
                 }
             }
@@ -106,11 +147,32 @@ fn collect_candidates(root: &Path) -> Vec<Candidate> {
 }
 
 fn match_candidates(candidates: &[Candidate], query: &str) -> Vec<String> {
+    let mut tokens = query.split_whitespace();
+    let Some(basename_query) = tokens.next() else {
+        return Vec::new();
+    };
+    let path_tokens = tokens.map(normalize_path_token).collect::<Vec<_>>();
     let config = Config::default()
         .max_typos(Some(0))
         .casing(CaseMatching::Ignore);
-    Matcher::new(query, &config)
-        .match_list(candidates)
+    if path_tokens.is_empty() {
+        return Matcher::new(basename_query, &config)
+            .match_list(candidates)
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|matched| candidates[matched.index as usize].path.clone())
+            .collect();
+    }
+    let candidates = candidates
+        .iter()
+        .filter(|candidate| {
+            path_tokens
+                .iter()
+                .all(|token| candidate.parent.contains(token))
+        })
+        .collect::<Vec<_>>();
+    Matcher::new(basename_query, &config)
+        .match_list(&candidates)
         .into_iter()
         .take(MAX_RESULTS)
         .map(|matched| candidates[matched.index as usize].path.clone())
@@ -122,11 +184,13 @@ fn search_documents_in(
     root: &Path,
     query: &str,
     refresh: bool,
+    extensions: Vec<String>,
 ) -> Result<Vec<String>, String> {
     let query = validate_query(query)?.to_owned();
-    if query.is_empty() {
+    if query.is_empty() || extensions.is_empty() {
         return Ok(Vec::new());
     }
+    let extensions = normalize_extensions(extensions)?;
     if !root.is_absolute() {
         return Err("The search root must be an absolute path.".into());
     }
@@ -135,12 +199,23 @@ fn search_documents_in(
         .cache
         .lock()
         .map_err(|_| "The filename cache is unavailable.".to_string())?;
-    let candidates = if refresh {
-        cache.insert(collect_candidates(root))
-    } else {
-        cache.get_or_insert_with(|| collect_candidates(root))
-    };
-    Ok(match_candidates(candidates, &query))
+    if refresh
+        || cache
+            .as_ref()
+            .is_none_or(|cached| cached.extensions != extensions)
+    {
+        cache.replace(CachedCandidates {
+            candidates: collect_candidates(root, &extensions),
+            extensions,
+        });
+    }
+    Ok(match_candidates(
+        &cache
+            .as_ref()
+            .expect("filename cache initialized")
+            .candidates,
+        &query,
+    ))
 }
 
 fn home_root() -> Result<PathBuf, String> {
@@ -157,16 +232,17 @@ fn home_root() -> Result<PathBuf, String> {
 pub async fn search_documents(
     query: String,
     refresh: bool,
+    extensions: Vec<String>,
     state: tauri::State<'_, SearchState>,
 ) -> Result<Vec<String>, String> {
     let query = validate_query(&query)?.to_owned();
-    if query.is_empty() {
+    if query.is_empty() || extensions.is_empty() {
         return Ok(Vec::new());
     }
     let root = home_root()?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        search_documents_in(&state, &root, &query, refresh)
+        search_documents_in(&state, &root, &query, refresh, extensions)
     })
     .await
     .map_err(|error| format!("Filename search task failed: {error}"))?
@@ -210,7 +286,16 @@ mod tests {
     }
 
     fn search(state: &SearchState, root: &Path, query: &str, refresh: bool) -> Vec<String> {
-        search_documents_in(state, root, query, refresh).expect("search fixture")
+        search_documents_in(state, root, query, refresh, all_extensions()).expect("search fixture")
+    }
+
+    fn all_extensions() -> Vec<String> {
+        [
+            "avif", "gif", "jpeg", "jpg", "json", "markdown", "md", "png", "svg", "toml", "txt",
+            "webp", "yaml", "yml",
+        ]
+        .map(str::to_owned)
+        .into()
     }
 
     fn file_names(paths: Vec<String>) -> Vec<String> {
@@ -295,6 +380,29 @@ mod tests {
     }
 
     #[test]
+    fn filters_fuzzy_file_names_by_every_parent_path_token() {
+        let fixture = Fixture::new();
+        fixture.file("bysuco/api/file.entity.json");
+        let expected = fixture.file("NovaID/문서/packages/file.entity.json");
+        fixture.file("obd/Dwitter/api/file.entity.json");
+
+        assert_eq!(
+            search(&SearchState::default(), &fixture.root, "fileent nov", true),
+            vec![expected.to_string_lossy()]
+        );
+        assert_eq!(
+            search(
+                &SearchState::default(),
+                &fixture.root,
+                "fileent nov 문서 packages",
+                true
+            ),
+            vec![expected.to_string_lossy()]
+        );
+        assert!(search(&SearchState::default(), &fixture.root, "fileent tmp", true).is_empty());
+    }
+
+    #[test]
     fn matches_exact_names_case_insensitively() {
         let fixture = Fixture::new();
         let first = fixture.file("a/ReadMe.MD");
@@ -365,12 +473,59 @@ mod tests {
         let state = SearchState::default();
         fixture.file("readme.md");
 
-        assert!(search_documents_in(&state, &fixture.root, "", true)
-            .expect("empty search")
-            .is_empty());
-        assert!(search_documents_in(&state, &fixture.root, "bad\nquery", true).is_err());
+        assert!(
+            search_documents_in(&state, &fixture.root, "", true, all_extensions())
+                .expect("empty search")
+                .is_empty()
+        );
+        assert!(
+            search_documents_in(&state, &fixture.root, "bad\nquery", true, all_extensions())
+                .is_err()
+        );
         assert!(state.cache.lock().expect("search cache").is_none());
         assert!(validate_query("readme").is_ok());
         assert!(validate_query(&"x".repeat(201)).is_err());
+    }
+
+    #[test]
+    fn filters_extensions_and_rebuilds_the_cache_when_the_filter_changes() {
+        let fixture = Fixture::new();
+        let state = SearchState::default();
+        let markdown = fixture.file("needle.md");
+        let json = fixture.file("needle.json");
+
+        assert_eq!(
+            search_documents_in(
+                &state,
+                &fixture.root,
+                "needle",
+                true,
+                vec!["JSON".into(), "json".into()],
+            )
+            .expect("filtered search"),
+            vec![json.to_string_lossy()]
+        );
+        assert_eq!(
+            search_documents_in(&state, &fixture.root, "needle", false, vec!["MD".into()],)
+                .expect("changed filter search"),
+            vec![markdown.to_string_lossy()]
+        );
+        assert!(search_documents_in(
+            &SearchState::default(),
+            &fixture.root,
+            "needle",
+            false,
+            Vec::new(),
+        )
+        .expect("empty filter")
+        .is_empty());
+        assert!(search_documents_in(
+            &SearchState::default(),
+            &fixture.root,
+            "needle",
+            false,
+            vec!["exe".into()],
+        )
+        .is_err());
     }
 }
