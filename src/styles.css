@@ -134,6 +134,18 @@ a:focus-visible,
   background: var(--page);
 }
 
+.app-version {
+  position: fixed;
+  z-index: 20;
+  right: 12px;
+  bottom: 8px;
+  color: var(--ink-soft);
+  font: 0.58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
 .app-topbar {
   display: grid;
   min-width: 0;
@@ -1151,7 +1163,7 @@ a:focus-visible,
   position: fixed;
   z-index: 90;
   right: 8px;
-  bottom: 8px;
+  bottom: 28px;
   border: 1px solid var(--line-strong);
   border-radius: 5px;
   background: var(--surface);

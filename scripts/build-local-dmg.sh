@@ -61,7 +61,14 @@ trap 'exit 1' HUP INT TERM
 mkdir -p "$bundle_dir"
 find "$bundle_dir" -maxdepth 1 -type f -name "${app_name}_*.dmg" -delete
 
-VITE_FFM_DIAGNOSTICS="$diagnostics" pnpm tauri build \
+build_id=$(git rev-parse --short HEAD)
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  build_id="${build_id}+"
+fi
+
+VITE_FFM_CHANNEL="$channel" \
+  VITE_FFM_BUILD="$build_id" \
+  VITE_FFM_DIAGNOSTICS="$diagnostics" pnpm tauri build \
   --bundles app,dmg \
   --config "$config_path"
 

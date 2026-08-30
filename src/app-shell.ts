@@ -3,6 +3,7 @@ import {
   createTextCodeView,
   type CodeViewElement,
 } from './components/json-tree';
+import packageMetadata from '../package.json';
 import type {
   DesktopBridge,
   DocumentKind,
@@ -28,6 +29,14 @@ const RECOVERY_WARNING = 'Recovery unavailable. Keep this tab open or save it to
 const SHORTCUT_DIAGNOSTICS_ENABLED = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
 const THEME_STORAGE_KEY = 'ffm.theme';
 const SEARCH_FORMAT_STORAGE_KEY = 'ffm.searchFormats';
+const APP_CHANNEL = import.meta.env.VITE_FFM_CHANNEL
+  || (import.meta.env.DEV ? 'preview' : 'release');
+const APP_BUILD = import.meta.env.VITE_FFM_BUILD || 'local';
+const APP_VERSION_LABEL = [
+  `v${packageMetadata.version}`,
+  APP_CHANNEL === 'release' ? undefined : APP_CHANNEL,
+  APP_BUILD === 'local' ? undefined : APP_BUILD,
+].filter(Boolean).join(' · ');
 const THEME_OPTIONS = [
   { value: 'green', label: 'FFM Green' },
   { value: 'light', label: 'Light' },
@@ -606,7 +615,11 @@ export async function createApp(
   formatHint.hidden = true;
   workArea.append(tablist, warning, viewport, formatHint);
   layout.append(sidebar, workArea);
-  shell.append(topbar, layout);
+  const versionLabel = document.createElement('small');
+  versionLabel.className = 'app-version';
+  versionLabel.dataset.appVersion = '';
+  versionLabel.textContent = APP_VERSION_LABEL;
+  shell.append(topbar, layout, versionLabel);
   root.replaceChildren(shell);
   const shortcutDiagnostics = document.createElement('output');
   if (SHORTCUT_DIAGNOSTICS_ENABLED) {

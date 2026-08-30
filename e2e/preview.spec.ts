@@ -18,6 +18,7 @@ test('Markdown opens as a focused article rather than an editor', async ({ page 
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
   await expect(page.locator('.markdown-document pre')).toContainText('render');
   await expect(page.locator('textarea')).toHaveCount(0);
+  await expect(page.locator('[data-app-version]')).toHaveText('v0.4.0 · preview');
   await expect(page.locator('.sidebar-outline')).not.toBeVisible();
   await expect(page.locator('.markdown-toc')).toHaveCount(0);
 
