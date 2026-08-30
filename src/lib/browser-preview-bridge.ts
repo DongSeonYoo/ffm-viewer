@@ -81,7 +81,7 @@ const SINGLE_FIXTURES = {
 export function createBrowserPreviewBridge(
   fixture: keyof typeof SINGLE_FIXTURES | 'multi',
 ): DesktopBridge {
-  const payloads = fixture === 'multi'
+  const payloads: DocumentPayload[] = fixture === 'multi'
     ? [
         MARKDOWN_FIXTURE,
         JSON_FIXTURE,
@@ -106,6 +106,19 @@ export function createBrowserPreviewBridge(
       const payload = payloads.find((candidate) => candidate.path === path);
       if (!payload) throw new Error('Fixture not found.');
       return payload;
+    },
+    renameDocument: async (path, stem) => {
+      const index = payloads.findIndex((candidate) => candidate.path === path);
+      const payload = payloads[index];
+      if (!payload) throw new Error('Fixture not found.');
+      const extension = payload.name.split('.').pop();
+      const name = extension ? `${stem}.${extension}` : stem;
+      const renamedPath = `${path.slice(0, path.lastIndexOf('/') + 1)}${name}`;
+      if (payloads.some((candidate) => candidate.path === renamedPath && candidate !== payload)) {
+        throw new Error('A file with that name already exists.');
+      }
+      payloads[index] = { ...payload, path: renamedPath, name };
+      return { path: renamedPath, name };
     },
     watchDocument: async () => undefined,
     takePendingOpen: async () => {

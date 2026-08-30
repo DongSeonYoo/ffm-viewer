@@ -265,18 +265,12 @@ function createOpenButton(
   return button;
 }
 
-function createEmptyState(onOpen: () => Promise<void>): HTMLElement {
+function createEmptyState(): HTMLElement {
   const state = document.createElement('section');
   state.className = 'empty-state';
-  const mark = document.createElement('div');
-  mark.className = 'empty-mark';
-  mark.setAttribute('aria-hidden', 'true');
-  mark.textContent = '¶';
-  const title = document.createElement('h1');
-  title.textContent = 'Read the file, not the syntax.';
-  const description = document.createElement('p');
-  description.textContent = 'Open or drop a supported local file.';
-  state.append(mark, title, description, createOpenButton('Open document', onOpen));
+  const hint = document.createElement('p');
+  hint.textContent = 'drop a file';
+  state.append(hint);
   return state;
 }
 
@@ -486,7 +480,7 @@ function createSidebarSection(name: string, countName: string) {
   toggle.setAttribute('aria-expanded', 'true');
   const chevron = document.createElement('span');
   chevron.className = 'sidebar-section-chevron';
-  chevron.textContent = '⌄';
+  chevron.setAttribute('aria-hidden', 'true');
   const label = document.createElement('span');
   label.className = 'sidebar-section-name';
   label.textContent = name;
@@ -500,7 +494,6 @@ function createSidebarSection(name: string, countName: string) {
   toggle.addEventListener('click', () => {
     const expanded = toggle.getAttribute('aria-expanded') === 'true';
     toggle.setAttribute('aria-expanded', String(!expanded));
-    chevron.textContent = expanded ? '›' : '⌄';
     content.hidden = expanded;
   });
   section.append(toggle, content);
@@ -533,17 +526,20 @@ export async function createApp(
   let activeId: string | undefined;
   let activeCodeView: CodeViewElement | undefined;
   let outlineObserver: MutationObserver | undefined;
+  let markdownTocCleanup: (() => void) | undefined;
   let renderSequence = 0;
   let readSequence = 0;
   let openQueue = Promise.resolve();
   const pendingPastes: string[] = [];
   let pasteBusy = false;
   let untitledCounter = 0;
+  let fileCounter = 0;
   let activationRevision = 0;
   let startupWarning: string | undefined;
   let refreshQuickSwitcherResults: (() => void) | undefined;
   let quickSwitcherReturnFocus: HTMLElement | undefined;
   const closingTabIds = new Set<string>();
+  const renamingPaths = new Set<string>();
 
   const shell = document.createElement('div');
   shell.className = 'app-shell';
@@ -664,6 +660,8 @@ export async function createApp(
   };
 
   const destroyActiveView = () => {
+    markdownTocCleanup?.();
+    markdownTocCleanup = undefined;
     outlineObserver?.disconnect();
     outlineObserver = undefined;
     activeCodeView?.destroy();
@@ -739,6 +737,111 @@ export async function createApp(
     formatHint.hidden = false;
   };
 
+  const beginTabRename = (tab: OpenTab, location: 'sidebar' | 'tab') => {
+    if (root.querySelector('.document-rename-input')) return;
+    if (activeId !== tab.id) activateTab(tab.id, true, false);
+
+    const container = location === 'sidebar' ? filesSection.content : tablist;
+    const row = Array.from(container.querySelectorAll<HTMLElement>('[data-tab-id]'))
+      .find((candidate) => candidate.dataset.tabId === tab.id);
+    const label = row?.querySelector<HTMLElement>(
+      location === 'sidebar' ? '.open-file-name' : '.document-tab-name',
+    );
+    if (!label) return;
+
+    const dot = tab.source === 'file' ? tab.payload.name.lastIndexOf('.') : -1;
+    const extension = dot > 0 ? tab.payload.name.slice(dot) : '';
+    const currentName = extension ? tab.payload.name.slice(0, dot) : tab.payload.name;
+    const editor = document.createElement('span');
+    editor.className = 'document-rename';
+    const input = document.createElement('input');
+    disableWritingAssistance(input);
+    input.className = 'document-rename-input';
+    input.value = currentName;
+    input.setAttribute('aria-label', `Rename ${tab.payload.name}`);
+    editor.append(input);
+    if (extension) {
+      const suffix = document.createElement('span');
+      suffix.className = 'document-rename-extension';
+      suffix.textContent = extension;
+      editor.append(suffix);
+    }
+    label.replaceWith(editor);
+
+    let committing = false;
+    const showError = (error: unknown) => {
+      committing = false;
+      input.disabled = false;
+      input.setCustomValidity(error instanceof Error ? error.message : 'Choose a valid name.');
+      input.setAttribute('aria-invalid', 'true');
+      input.reportValidity();
+      input.focus();
+      input.select();
+    };
+    const commit = async () => {
+      const name = input.value.trim();
+      if (!name) {
+        showError(new Error('Choose a name.'));
+        return;
+      }
+      if (name === currentName) {
+        renderChrome();
+        return;
+      }
+      committing = true;
+      input.disabled = true;
+      if (tab.source === 'scratch') {
+        tab.payload = { ...tab.payload, name };
+        renderChrome();
+        if (activeId === tab.id) document.title = `${name} — FFM Viewer`;
+        refreshQuickSwitcherResults?.();
+        if (tab.dirty) await persistDirtyScratches(tab);
+        return;
+      }
+
+      const path = tab.payload.path;
+      readSequence += 1;
+      renamingPaths.add(path);
+      try {
+        const renamed = await bridge.renameDocument(path, name);
+        if (!tabs.includes(tab)) return;
+        tab.payload = { ...tab.payload, path: renamed.path, name: renamed.name };
+        renderChrome();
+        if (activeId === tab.id) document.title = `${renamed.name} — FFM Viewer`;
+        refreshQuickSwitcherResults?.();
+        if (activeId === tab.id) await refreshFileTab(tab.id);
+      } catch (error) {
+        showError(error);
+        if (activeId === tab.id) void refreshFileTab(tab.id);
+      } finally {
+        renamingPaths.delete(path);
+      }
+    };
+    input.addEventListener('input', () => {
+      input.setCustomValidity('');
+      input.removeAttribute('aria-invalid');
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        void commit();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        renderChrome();
+      }
+    });
+    input.addEventListener('blur', () => {
+      if (committing) return;
+      requestAnimationFrame(() => {
+        if (input.isConnected && document.activeElement !== input) renderChrome();
+      });
+    });
+    input.focus();
+    input.select();
+  };
+
   const renderChrome = () => {
     tablist.replaceChildren();
     filesSection.content.replaceChildren();
@@ -748,13 +851,21 @@ export async function createApp(
       type.className = 'document-type';
       type.textContent = kindLabel(tab.payload);
 
-      const fileButton = document.createElement('button');
-      fileButton.type = 'button';
+      const fileButton = document.createElement('div');
       fileButton.className = `open-file${selected ? ' is-active' : ''}`;
-      fileButton.dataset.openFile = tab.id;
+      fileButton.dataset.openFile = tab.payload.path;
+      fileButton.dataset.tabId = tab.id;
+      fileButton.setAttribute('role', 'button');
+      fileButton.tabIndex = 0;
       const fileName = document.createElement('span');
       fileName.className = 'open-file-name';
       fileName.textContent = tab.payload.name;
+      fileName.addEventListener('mousedown', (event) => {
+        if (event.button !== 0 || event.detail !== 2) return;
+        event.preventDefault();
+        event.stopPropagation();
+        beginTabRename(tab, 'sidebar');
+      });
       fileButton.append(type.cloneNode(true), fileName);
       if (tab.dirty) {
         const dirty = document.createElement('span');
@@ -763,16 +874,26 @@ export async function createApp(
         fileButton.append(dirty);
       }
       fileButton.addEventListener('click', () => activateTab(tab.id));
+      fileButton.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') activateTab(tab.id);
+      });
       filesSection.content.append(fileButton);
 
       const tabElement = document.createElement('div');
       tabElement.className = `document-tab${selected ? ' is-active' : ''}`;
       tabElement.setAttribute('role', 'tab');
       tabElement.setAttribute('aria-selected', String(selected));
+      tabElement.dataset.tabId = tab.id;
       tabElement.tabIndex = selected ? 0 : -1;
       const tabName = document.createElement('span');
       tabName.className = 'document-tab-name';
       tabName.textContent = tab.payload.name;
+      tabName.addEventListener('mousedown', (event) => {
+        if (event.button !== 0 || event.detail !== 2) return;
+        event.preventDefault();
+        event.stopPropagation();
+        beginTabRename(tab, 'tab');
+      });
       const close = document.createElement('button');
       close.type = 'button';
       close.className = 'document-tab-close';
@@ -805,29 +926,71 @@ export async function createApp(
     });
   };
 
-  const renderMarkdownOutline = (article: HTMLElement) => {
+  const createMarkdownToc = (article: HTMLElement): HTMLElement | undefined => {
     const headings = Array.from(
-      article.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'),
-    );
+      article.querySelectorAll<HTMLElement>('h2, h3, h4'),
+    ).filter((heading) => heading.textContent?.trim());
+    if (headings.length < 2) return undefined;
+
+    const toc = document.createElement('nav');
+    toc.className = 'markdown-toc';
+    toc.setAttribute('aria-label', 'Document sections');
+    const list = document.createElement('ul');
+    const entries: Array<{
+      readonly heading: HTMLElement;
+      readonly link: HTMLAnchorElement;
+    }> = [];
+
+    const setActiveHeading = (active?: HTMLElement) => {
+      for (const entry of entries) {
+        if (entry.heading === active) entry.link.setAttribute('aria-current', 'location');
+        else entry.link.removeAttribute('aria-current');
+      }
+    };
+
     for (const heading of headings) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'outline-item';
-      item.style.setProperty('--outline-depth', String(Number(heading.tagName.slice(1)) - 1));
-      item.textContent = heading.textContent ?? '';
-      item.addEventListener('click', () => {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.className = 'markdown-toc-link';
+      link.href = `#${heading.id}`;
+      link.style.setProperty('--toc-depth', String(Number(heading.tagName.slice(1)) - 2));
+      link.textContent = heading.textContent ?? '';
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
         navigationRevision += 1;
         if (!pendingPaneHistory) updateCurrentHistoryEntry();
-        outlineSection.content
-          .querySelector('[aria-current="location"]')
-          ?.removeAttribute('aria-current');
-        item.setAttribute('aria-current', 'location');
+        setActiveHeading(heading);
         heading.scrollIntoView?.({ block: 'start' });
-        recordCurrentLocation('sidebar');
+        recordCurrentLocation('content');
       });
-      outlineSection.content.append(item);
+      item.append(link);
+      list.append(item);
+      entries.push({ heading, link });
     }
-    outlineSection.count.textContent = String(headings.length);
+    toc.append(list);
+
+    let frame: number | undefined;
+    const updateActiveHeading = () => {
+      frame = undefined;
+      const threshold = viewport.getBoundingClientRect().top + 72;
+      let active: HTMLElement | undefined;
+      for (const heading of headings) {
+        if (heading.getBoundingClientRect().top > threshold) break;
+        active = heading;
+      }
+      setActiveHeading(active);
+    };
+    const onScroll = () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(updateActiveHeading);
+    };
+    viewport.addEventListener('scroll', onScroll, { passive: true });
+    markdownTocCleanup = () => {
+      viewport.removeEventListener('scroll', onScroll);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+    onScroll();
+    return toc;
   };
 
   const renderError = (message: string) => {
@@ -835,6 +998,7 @@ export async function createApp(
     viewport.replaceChildren();
     outlineSection.content.replaceChildren();
     outlineSection.count.textContent = '0';
+    outlineSection.section.hidden = true;
     const state = document.createElement('section');
     state.className = 'error-state';
     state.setAttribute('role', 'alert');
@@ -856,9 +1020,10 @@ export async function createApp(
     viewport.replaceChildren();
     viewport.scrollTop = 0;
     const tab = activeTab();
+    outlineSection.section.hidden = tab?.payload.kind !== 'json';
     if (!tab) {
       shell.className = 'app-shell';
-      viewport.append(createEmptyState(chooseDocuments));
+      viewport.append(createEmptyState());
       renderWarning();
       renderFormatHint();
       document.title = 'FFM Viewer';
@@ -882,10 +1047,12 @@ export async function createApp(
       return;
     }
     if (tab.payload.kind === 'markdown') {
+      const readingLayout = document.createElement('div');
+      readingLayout.className = 'markdown-reading-layout';
       const article = document.createElement('article');
       article.className = 'markdown-document';
       article.innerHTML = renderMarkdown(tab.payload.content);
-      renderMarkdownOutline(article);
+      const toc = createMarkdownToc(article);
       if (tab.source === 'file') {
         void hydrateLocalImages(
           article,
@@ -902,7 +1069,9 @@ export async function createApp(
         event.preventDefault();
         if (/^(?:https?:|mailto:)/i.test(href)) void bridge.openExternal(href);
       });
-      viewport.append(article);
+      readingLayout.append(article);
+      if (toc) readingLayout.append(toc);
+      viewport.append(readingLayout);
       requestAnimationFrame(() => {
         if (activeId === tab.id) viewport.scrollTop = tab.scrollTop;
       });
@@ -995,7 +1164,7 @@ export async function createApp(
     if (pane === 'sidebar') {
       const file = Array.from(
         sidebar.querySelectorAll<HTMLElement>('[data-open-file]'),
-      ).find((candidate) => candidate.dataset.openFile === tab.id);
+      ).find((candidate) => candidate.dataset.tabId === tab.id);
       (file ?? sidebar.querySelector<HTMLElement>('button'))?.focus();
     } else {
       viewport.focus();
@@ -1210,10 +1379,12 @@ export async function createApp(
       await bridge.watchDocument(
         path,
         (changedPath) => {
+          if (renamingPaths.has(changedPath)) return;
           const changed = tabs.find((candidate) => candidate.payload.path === changedPath);
           if (changed && changed.id === activeId) void refreshFileTab(changed.id, false);
         },
         (failedPath) => {
+          if (renamingPaths.has(failedPath)) return;
           const failed = tabs.find((candidate) => candidate.payload.path === failedPath);
           if (!failed || failed.id !== activeId) return;
           failed.warning = WATCH_WARNING;
@@ -1365,7 +1536,6 @@ export async function createApp(
     if (!tab) return;
     const finish = () => {
       removeTab(id);
-      if (tabs.length === 0) requestCloseWindow();
     };
     void guardedTabClose(tab, finish);
   }
@@ -1406,7 +1576,7 @@ export async function createApp(
         return;
       }
       const tab: OpenTab = {
-        id: payload.path,
+        id: `file:${++fileCounter}`,
         source: 'file',
         payload,
         scrollTop: 0,
@@ -2030,7 +2200,7 @@ export async function createApp(
       for (const [tab, groupMatches] of groups) {
         const group = document.createElement('section');
         group.className = 'content-search-group';
-        group.dataset.contentSearchGroup = tab.id;
+        group.dataset.contentSearchGroup = tab.payload.path;
         group.setAttribute('role', 'group');
         group.setAttribute('aria-label', `${tab.payload.name}, ${groupMatches.length} results`);
         const header = document.createElement('header');
@@ -2177,6 +2347,7 @@ export async function createApp(
     if (SHORTCUT_DIAGNOSTICS_ENABLED) {
       shortcutDiagnostics.textContent = `key=${event.key} code=${event.code || '—'} meta=${Number(event.metaKey)} ctrl=${Number(event.ctrlKey)} alt=${Number(event.altKey)}`;
     }
+    if (event.target instanceof Element && event.target.closest('.document-rename-input')) return;
     const command = event.metaKey;
     if (
       command

@@ -74,6 +74,16 @@ function createBridge(
       if (!document) throw new Error('File could not be opened.');
       return document;
     }),
+    renameDocument: vi.fn(async (path: string, stem: string) => {
+      const document = documents[path];
+      if (!document) throw new Error('File could not be renamed.');
+      const dot = document.name.lastIndexOf('.');
+      const name = `${stem}${dot < 0 ? '' : document.name.slice(dot)}`;
+      const renamedPath = `${path.slice(0, path.lastIndexOf('/') + 1)}${name}`;
+      documents[renamedPath] = { ...document, path: renamedPath, name };
+      delete documents[path];
+      return { path: renamedPath, name };
+    }),
     watchDocument: vi.fn(async (_path, handler, onError) => {
       changeHandler = handler;
       watchErrorHandler = onError;
@@ -137,12 +147,15 @@ describe('createApp', () => {
     delete document.documentElement.dataset.theme;
   });
 
-  it('starts with a quiet invitation to open or drop a supported document', async () => {
+  it('starts with a bare drop target instead of a welcome card', async () => {
     const { bridge } = createBridge();
     await createApp(document.querySelector('#app')!, bridge);
 
-    expect(document.querySelector('.empty-state button')?.textContent).toMatch(/Open document/i);
-    expect(document.body.textContent).toContain('supported local file');
+    expect(document.querySelector('.empty-state')?.textContent).toBe('drop a file');
+    expect(document.querySelector('.empty-state button')).toBeNull();
+    expect(document.querySelector('.empty-state h1')).toBeNull();
+    expect(Array.from(document.querySelectorAll('.sidebar-section-chevron'))
+      .every(({ textContent }) => textContent === '')).toBe(true);
   });
 
   it('uses the desktop open shortcut without adding editor chrome', async () => {
@@ -231,6 +244,30 @@ describe('createApp', () => {
       expect.any(Function),
       expect.any(Function),
     );
+    expect(document.querySelector('.sidebar-outline')?.closest('section')?.hidden).toBe(true);
+    expect(document.querySelector('.markdown-toc')).toBeNull();
+  });
+
+  it('shows substantial Markdown navigation only beside the reading surface', async () => {
+    const payload = markdownDocument([
+      '# Guide',
+      '',
+      '## Start',
+      '',
+      '### Details',
+      '',
+      '## Finish',
+    ].join('\n'));
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.markdown-toc')).not.toBeNull());
+
+    expect(document.querySelector('.sidebar-outline')?.closest('section')?.hidden).toBe(true);
+    expect(Array.from(document.querySelectorAll('.markdown-toc-link'))
+      .map(({ textContent }) => textContent)).toEqual(['Start', 'Details', 'Finish']);
+    expect(document.querySelector('.markdown-toc')?.textContent).not.toContain('Guide');
   });
 
   it('renders a JSON file as read-only code with a key outline', async () => {
@@ -241,6 +278,7 @@ describe('createApp', () => {
     requestOpen(payload.path);
     await vi.waitFor(() => expect(document.querySelector('.json-code-view')).not.toBeNull());
     expect(document.querySelector('.json-outline')?.textContent).toContain('service');
+    expect(document.querySelector('.sidebar-outline')?.closest('section')?.hidden).toBe(false);
     expect(document.querySelector('.cm-editor')).not.toBeNull();
     expect(document.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
   });
@@ -263,6 +301,7 @@ describe('createApp', () => {
         );
       });
       expect(document.querySelector('[data-section-count="outline"]')?.textContent).toBe('0');
+      expect(document.querySelector('.sidebar-outline')?.closest('section')?.hidden).toBe(true);
     }
     expect(document.querySelectorAll('[role="tab"]')).toHaveLength(3);
     expect(Array.from(document.querySelectorAll('.document-tab .document-type'))
@@ -322,6 +361,81 @@ describe('createApp', () => {
     expect(
       document.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
     ).toContain('readme.md');
+  });
+
+  it('renames a file from either open-file label and keeps both labels in sync', async () => {
+    const payload = markdownDocument('# Rename me');
+    const documents = { [payload.path]: payload };
+    const { bridge, requestOpen, notifyChange } = createBridge(documents);
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Rename me'));
+
+    let finishStaleRefresh!: (payload: DocumentPayload) => void;
+    const changed = { ...payload, content: '# Changed while renaming' };
+    documents[payload.path] = changed;
+    vi.mocked(bridge.readDocument).mockImplementationOnce(
+      () => new Promise<DocumentPayload>((resolve) => {
+        finishStaleRefresh = resolve;
+      }),
+    );
+    notifyChange(payload.path);
+    await vi.waitFor(() => expect(bridge.readDocument).toHaveBeenCalledTimes(2));
+
+    document.querySelector('.document-tab-name')?.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true,
+      detail: 2,
+    }));
+    let input = document.querySelector<HTMLInputElement>('.document-rename-input')!;
+    expect(input.value).toBe('readme');
+    expect(document.querySelector('.document-rename-extension')?.textContent).toBe('.md');
+    input.value = 'notes';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    await vi.waitFor(() => expect(bridge.renameDocument).toHaveBeenCalledWith(
+      '/tmp/readme.md', 'notes',
+    ));
+    await vi.waitFor(() => expect(Array.from(document.querySelectorAll(
+      '.document-tab-name, .open-file-name',
+    )).every(({ textContent }) => textContent === 'notes.md')).toBe(true));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Changed while renaming'));
+    finishStaleRefresh(changed);
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    expect(Array.from(document.querySelectorAll('.document-tab-name, .open-file-name'))
+      .every(({ textContent }) => textContent === 'notes.md')).toBe(true);
+
+    document.querySelector('.open-file-name')?.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true,
+      detail: 2,
+    }));
+    input = document.querySelector<HTMLInputElement>('.document-rename-input')!;
+    input.value = 'guide';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    await vi.waitFor(() => expect(bridge.renameDocument).toHaveBeenLastCalledWith(
+      '/tmp/notes.md', 'guide',
+    ));
+    await vi.waitFor(() => expect(Array.from(document.querySelectorAll(
+      '.document-tab-name, .open-file-name',
+    )).every(({ textContent }) => textContent === 'guide.md')).toBe(true));
+  });
+
+  it('renames a Scratch tab without touching the file system', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', metaKey: true }));
+
+    document.querySelector('.document-tab-name')?.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true,
+      detail: 2,
+    }));
+    const input = document.querySelector<HTMLInputElement>('.document-rename-input')!;
+    input.value = 'Draft';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(Array.from(document.querySelectorAll('.document-tab-name, .open-file-name'))
+      .every(({ textContent }) => textContent === 'Draft')).toBe(true);
+    expect(bridge.renameDocument).not.toHaveBeenCalled();
   });
 
   it('keeps the current document visible when another file cannot be opened', async () => {
@@ -507,7 +621,7 @@ describe('createApp', () => {
   });
 
   it('restores action scroll locations with the back and forward buttons', async () => {
-    const payload = markdownDocument('# First\n\n## Second');
+    const payload = markdownDocument('# First\n\n## Second\n\n## Third');
     const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
     await createApp(document.querySelector('#app')!, bridge);
     requestOpen(payload.path);
@@ -516,7 +630,7 @@ describe('createApp', () => {
     viewport.scrollTop = 120;
     const heading = document.querySelectorAll<HTMLElement>('.markdown-document h2')[0]!;
     heading.scrollIntoView = () => { viewport.scrollTop = 240; };
-    const outline = Array.from(document.querySelectorAll<HTMLButtonElement>('.outline-item'))
+    const outline = Array.from(document.querySelectorAll<HTMLAnchorElement>('.markdown-toc-link'))
       .find((item) => item.textContent === 'Second')!;
     outline.focus();
     outline.click();
@@ -533,7 +647,7 @@ describe('createApp', () => {
   });
 
   it('keeps history entries intact during rapid back and forward shortcuts', async () => {
-    const payload = markdownDocument('# First\n\n## Second');
+    const payload = markdownDocument('# First\n\n## Second\n\n## Third');
     const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
     await createApp(document.querySelector('#app')!, bridge);
     requestOpen(payload.path);
@@ -542,7 +656,7 @@ describe('createApp', () => {
     viewport.scrollTop = 120;
     const heading = document.querySelector<HTMLElement>('.markdown-document h2')!;
     heading.scrollIntoView = () => { viewport.scrollTop = 240; };
-    const outline = Array.from(document.querySelectorAll<HTMLButtonElement>('.outline-item'))
+    const outline = Array.from(document.querySelectorAll<HTMLAnchorElement>('.markdown-toc-link'))
       .find((item) => item.textContent === 'Second')!;
     outline.focus();
     outline.click();
@@ -565,7 +679,7 @@ describe('createApp', () => {
   });
 
   it('cancels a deferred outline action when Cmd+Z runs immediately', async () => {
-    const payload = markdownDocument('# First\n\n## Second');
+    const payload = markdownDocument('# First\n\n## Second\n\n## Third');
     const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
     await createApp(document.querySelector('#app')!, bridge);
     requestOpen(payload.path);
@@ -574,7 +688,7 @@ describe('createApp', () => {
     viewport.scrollTop = 120;
     const heading = document.querySelector<HTMLElement>('.markdown-document h2')!;
     heading.scrollIntoView = () => { viewport.scrollTop = 240; };
-    const outline = Array.from(document.querySelectorAll<HTMLButtonElement>('.outline-item'))
+    const outline = Array.from(document.querySelectorAll<HTMLAnchorElement>('.markdown-toc-link'))
       .find((item) => item.textContent === 'Second')!;
 
     outline.click();
@@ -1286,7 +1400,7 @@ describe('createApp', () => {
     expect(bridge.closeWindow).not.toHaveBeenCalled();
   });
 
-  it('closes the window when Ctrl+W removes the last tab or no tab is open', async () => {
+  it('shows the empty state when Ctrl+W removes the last tab', async () => {
     const payload = markdownDocument('# Only');
     const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
     await createApp(document.querySelector('#app')!, bridge);
@@ -1294,10 +1408,12 @@ describe('createApp', () => {
     await vi.waitFor(() => expect(document.body.textContent).toContain('Only'));
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
-    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(1));
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(document.querySelector('.empty-state')).not.toBeNull();
+    expect(bridge.closeWindow).not.toHaveBeenCalled();
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true }));
-    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(1));
   });
 
   it('keeps a dirty last tab and window open when Ctrl+W is cancelled', async () => {
@@ -1328,8 +1444,8 @@ describe('createApp', () => {
 
     expect(bridge.confirmClose).toHaveBeenCalledTimes(1);
     resolveDecision('discard');
-    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(1));
-    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0));
+    expect(bridge.closeWindow).not.toHaveBeenCalled();
   });
 
   it('waits for Scratch recovery before accepting another tab or window close', async () => {
@@ -1357,8 +1473,8 @@ describe('createApp', () => {
     expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
 
     resolveRecovery();
-    await vi.waitFor(() => expect(bridge.closeWindow).toHaveBeenCalledTimes(1));
-    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0));
+    expect(bridge.closeWindow).not.toHaveBeenCalled();
   });
 
   it('does not treat Control as Command', async () => {
@@ -1609,6 +1725,12 @@ describe('createApp', () => {
 
     expect(document.querySelectorAll('[role="tab"]')).toHaveLength(1);
     expect(document.body.textContent).toContain('First');
+
+    requestTabClose();
+
+    expect(document.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(document.querySelector('.empty-state')).not.toBeNull();
+    expect(bridge.closeWindow).not.toHaveBeenCalled();
   });
 
   it('creates a Scratch tab with Cmd+N and previews pasted Markdown', async () => {

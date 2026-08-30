@@ -75,6 +75,17 @@ describe('createTauriBridge', () => {
     expect(tauri.invoke).toHaveBeenCalledWith('watch_document', { path: '/tmp/b.md' });
   });
 
+  it('renames a document through the native bridge', async () => {
+    tauri.invoke.mockResolvedValue({ path: '/tmp/notes.md', name: 'notes.md' });
+
+    await expect(createTauriBridge().renameDocument('/tmp/readme.md', 'notes'))
+      .resolves.toEqual({ path: '/tmp/notes.md', name: 'notes.md' });
+    expect(tauri.invoke).toHaveBeenCalledWith('rename_document', {
+      path: '/tmp/readme.md',
+      stem: 'notes',
+    });
+  });
+
   it.each([
     ['Save', 'save'],
     ['Discard', 'discard'],

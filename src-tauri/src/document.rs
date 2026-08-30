@@ -1,12 +1,14 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Component, Path};
 
 const MAX_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_RENAME_STEM_BYTES: usize = 240;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -26,6 +28,13 @@ pub struct DocumentPayload {
     pub name: String,
     pub kind: DocumentKind,
     pub content: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenamedDocumentPayload {
+    pub path: String,
+    pub name: String,
 }
 
 pub fn classify_extension(path: &Path) -> Result<DocumentKind, String> {
@@ -99,6 +108,86 @@ pub fn read_document_from_path(path: &Path) -> Result<DocumentPayload, String> {
 #[tauri::command]
 pub fn read_document(path: String) -> Result<DocumentPayload, String> {
     read_document_from_path(Path::new(&path))
+}
+
+fn rename_document_at_path(path: &Path, stem: &str) -> Result<RenamedDocumentPayload, String> {
+    let source = path
+        .canonicalize()
+        .map_err(|_| "The selected document could not be found.".to_string())?;
+    if !source
+        .metadata()
+        .map_err(|_| "The selected document could not be inspected.".to_string())?
+        .is_file()
+    {
+        return Err("Select a supported file, not a directory.".into());
+    }
+    classify_extension(&source)?;
+
+    let stem = stem.trim();
+    let stem_path = Path::new(stem);
+    let mut components = stem_path.components();
+    if stem.is_empty()
+        || stem.len() > MAX_RENAME_STEM_BYTES
+        || stem.chars().any(char::is_control)
+        || !matches!(components.next(), Some(Component::Normal(value)) if value == stem_path.as_os_str())
+        || components.next().is_some()
+    {
+        return Err("Choose a valid file name under 240 bytes.".into());
+    }
+
+    let extension = source
+        .extension()
+        .ok_or_else(|| "This file type is not supported.".to_string())?;
+    let mut name = OsString::from(stem);
+    name.push(".");
+    name.push(extension);
+    let parent = source
+        .parent()
+        .ok_or_else(|| "The document folder is unavailable.".to_string())?;
+    let target = parent.join(&name);
+
+    if target == source {
+        return Ok(RenamedDocumentPayload {
+            path: source.to_string_lossy().into_owned(),
+            name: name.to_string_lossy().into_owned(),
+        });
+    }
+
+    if matches!(fs::symlink_metadata(&target), Ok(metadata) if !metadata.file_type().is_symlink())
+        && matches!(target.canonicalize(), Ok(existing) if existing == source)
+    {
+        fs::rename(&source, &target)
+            .map_err(|_| "The document could not be renamed.".to_string())?;
+        return Ok(RenamedDocumentPayload {
+            path: target.to_string_lossy().into_owned(),
+            name: name.to_string_lossy().into_owned(),
+        });
+    }
+
+    match fs::hard_link(&source, &target) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err("Choose a new file name. FFM will not overwrite an existing file.".into());
+        }
+        Err(_) => return Err("The document could not be renamed.".into()),
+    }
+    if fs::remove_file(&source).is_err() {
+        return if fs::remove_file(&target).is_ok() {
+            Err("The document could not be renamed.".into())
+        } else {
+            Err("The document could not be renamed cleanly. Both file names may remain.".into())
+        };
+    }
+
+    Ok(RenamedDocumentPayload {
+        path: target.to_string_lossy().into_owned(),
+        name: name.to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
+pub fn rename_document(path: String, stem: String) -> Result<RenamedDocumentPayload, String> {
+    rename_document_at_path(Path::new(&path), &stem)
 }
 
 fn write_document_to_path(path: &Path, content: &str) -> Result<(), String> {
@@ -349,6 +438,102 @@ mod tests {
         assert_eq!(
             fs::read_to_string(path).expect("original remains"),
             "original"
+        );
+    }
+
+    #[test]
+    fn renames_a_document_without_changing_its_extension() {
+        let source = temp_file("notes.MD", b"original");
+
+        let renamed =
+            rename_document_at_path(&source, "  field-notes  ").expect("document should rename");
+        let target = source
+            .parent()
+            .expect("parent")
+            .canonicalize()
+            .expect("canonical parent")
+            .join("field-notes.MD");
+
+        assert_eq!(renamed.path, target.to_string_lossy());
+        assert_eq!(renamed.name, "field-notes.MD");
+        assert_eq!(
+            fs::read_to_string(&target).expect("renamed contents"),
+            "original"
+        );
+        assert!(!source.exists());
+
+        let unchanged =
+            rename_document_at_path(&target, "field-notes").expect("same name should be a no-op");
+        assert_eq!(unchanged.path, renamed.path);
+    }
+
+    #[test]
+    fn refuses_to_overwrite_a_document_during_rename() {
+        let source = temp_file("source.md", b"source");
+        let target = source.parent().expect("parent").join("taken.md");
+        fs::write(&target, "target").expect("collision fixture");
+
+        let error = rename_document_at_path(&source, "taken")
+            .expect_err("existing target must not be overwritten");
+
+        assert!(error.contains("not overwrite"));
+        assert_eq!(
+            fs::read_to_string(&source).expect("source remains"),
+            "source"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).expect("target remains"),
+            "target"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn renames_only_the_case_on_a_case_insensitive_volume() {
+        let source = temp_file("case-only.md", b"original");
+        let target = source.parent().expect("parent").join("CASE-ONLY.md");
+        if target.canonicalize().ok() != source.canonicalize().ok() {
+            return;
+        }
+
+        let renamed =
+            rename_document_at_path(&source, "CASE-ONLY").expect("case-only rename should succeed");
+        let names = fs::read_dir(source.parent().expect("parent"))
+            .expect("directory should be readable")
+            .map(|entry| entry.expect("entry should be readable").file_name())
+            .collect::<Vec<_>>();
+
+        assert_eq!(renamed.name, "CASE-ONLY.md");
+        assert_eq!(names, [OsString::from("CASE-ONLY.md")]);
+        assert_eq!(
+            fs::read_to_string(target).expect("contents remain"),
+            "original"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_rename_stems() {
+        let source = temp_file("source.md", b"source");
+
+        for stem in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../escape",
+            "folder/name",
+            "folder/.",
+            "name/",
+            "bad\nname",
+        ] {
+            rename_document_at_path(&source, stem).expect_err("invalid stem must fail");
+        }
+        rename_document_at_path(&source, &"x".repeat(MAX_RENAME_STEM_BYTES + 1))
+            .expect_err("oversized stem must fail");
+
+        assert_eq!(
+            fs::read_to_string(source).expect("source remains"),
+            "source"
         );
     }
 

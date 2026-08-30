@@ -7,6 +7,11 @@ export interface DocumentPayload {
   readonly content: string;
 }
 
+export interface RenamedDocument {
+  readonly path: string;
+  readonly name: string;
+}
+
 export type Dispose = () => void;
 export type PathHandler = (path: string) => void;
 export type CloseDecision = 'save' | 'discard' | 'cancel';
@@ -21,6 +26,7 @@ export interface ScratchRecovery {
 export interface DesktopBridge {
   chooseDocuments(): Promise<readonly string[]>;
   readDocument(path: string): Promise<DocumentPayload>;
+  renameDocument(path: string, stem: string): Promise<RenamedDocument>;
   watchDocument(
     path: string,
     onChange: PathHandler,

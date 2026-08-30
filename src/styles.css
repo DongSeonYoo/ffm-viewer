@@ -1,3 +1,5 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench + reading rail
+ * tone: indifferent utility · anchor hue: mint · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 :root {
   color-scheme: dark;
   font-family:
@@ -104,7 +106,8 @@ button {
 }
 
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+.open-file:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -241,20 +244,24 @@ a:focus-visible {
 }
 
 .sidebar-section + .sidebar-section {
-  margin-top: 18px;
+  margin-top: 12px;
 }
 
 .sidebar-section-toggle {
-  display: flex;
+  display: grid;
   width: 100%;
-  height: 28px;
+  height: 24px;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
   align-items: center;
+  column-gap: 8px;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--ink-soft);
   cursor: pointer;
-  padding: 0 7px;
+  padding: 0 8px;
+  line-height: 1;
+  text-align: left;
 }
 
 .sidebar-section-toggle:hover {
@@ -262,23 +269,37 @@ a:focus-visible {
   color: var(--ink);
 }
 
+.sidebar-section-toggle:active {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
 .sidebar-section-chevron {
-  width: 14px;
+  width: 6px;
+  height: 6px;
+  justify-self: center;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
   color: var(--ink-soft);
-  font-size: 0.75rem;
+  transform: rotate(-45deg);
+}
+
+.sidebar-section-toggle[aria-expanded='true'] .sidebar-section-chevron {
+  transform: rotate(45deg);
 }
 
 .sidebar-section-name {
   font-size: 0.64rem;
-  font-weight: 720;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .sidebar-section-count {
-  margin-left: auto;
+  justify-self: end;
   color: var(--ink-soft);
-  font: 0.65rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
@@ -286,8 +307,7 @@ a:focus-visible {
   display: none;
 }
 
-.open-file,
-.outline-item {
+.open-file {
   display: flex;
   width: 100%;
   min-width: 0;
@@ -303,14 +323,12 @@ a:focus-visible {
   text-align: left;
 }
 
-.open-file:hover,
-.outline-item:hover {
+.open-file:hover {
   background: var(--surface-strong);
   color: var(--ink);
 }
 
-.open-file.is-active,
-.outline-item[aria-current='location'] {
+.open-file.is-active {
   background: var(--accent-soft);
   color: var(--ink);
 }
@@ -332,6 +350,45 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.document-rename {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+}
+
+.document-rename-input {
+  width: 100%;
+  min-width: 32px;
+  height: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  background: var(--page);
+  color: var(--ink);
+  padding: 0 4px;
+}
+
+.document-rename-input:focus {
+  outline-color: var(--accent);
+}
+
+.document-rename-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.document-rename-input:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.document-rename-extension {
+  flex: none;
+  margin-left: 4px;
+  color: var(--ink-soft);
+}
+
 .open-file-dirty {
   width: 6px;
   height: 6px;
@@ -341,13 +398,8 @@ a:focus-visible {
   background: var(--accent);
 }
 
-.open-file-name,
-.outline-item {
+.open-file-name {
   font-size: 0.76rem;
-}
-
-.outline-item {
-  padding-left: calc(8px + var(--outline-depth, 0) * 10px);
 }
 
 .sidebar-outline .json-outline {
@@ -363,6 +415,7 @@ a:focus-visible {
   min-width: 0;
   min-height: 0;
   grid-template-rows: 39px auto minmax(0, 1fr);
+  container-type: inline-size;
   background: var(--page);
 }
 
@@ -1036,7 +1089,23 @@ a:focus-visible {
   background: var(--surface);
 }
 
-.empty-state,
+.empty-state {
+  display: grid;
+  min-height: 100vh;
+  align-content: start;
+  justify-items: start;
+  padding: 24px;
+  color: var(--ink-soft);
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
 .error-state {
   display: grid;
   min-height: 100vh;
@@ -1046,20 +1115,6 @@ a:focus-visible {
   text-align: center;
 }
 
-.empty-mark {
-  display: grid;
-  width: 58px;
-  height: 58px;
-  place-items: center;
-  margin-bottom: 30px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  color: var(--accent);
-  font-family: Georgia, serif;
-  font-size: 2rem;
-}
-
-.empty-state h1,
 .error-state h1 {
   max-width: 520px;
   margin: 0;
@@ -1068,7 +1123,6 @@ a:focus-visible {
   letter-spacing: -0.035em;
 }
 
-.empty-state p,
 .error-state p {
   max-width: 480px;
   margin: 14px 0 28px;
@@ -1110,15 +1164,78 @@ a:focus-visible {
   width: 100%;
 }
 
+.markdown-reading-layout {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(24px, 1fr) minmax(0, 768px) minmax(24px, 1fr);
+  align-items: start;
+  margin: 4.5rem 0 8rem;
+}
+
 .markdown-document {
-  width: min(768px, calc(100% - 48px));
-  margin: 4.5rem auto 8rem;
+  min-width: 0;
+  grid-column: 2;
   color: var(--ink);
   font-size: 1.125rem;
   letter-spacing: -0.004em;
   line-height: 1.72;
   overflow-wrap: break-word;
   word-break: keep-all;
+}
+
+.markdown-toc {
+  position: sticky;
+  top: 24px;
+  grid-column: 3;
+  width: 184px;
+  max-width: calc(100% - 48px);
+  max-height: calc(100vh - 148px);
+  overflow-y: auto;
+  margin-left: 48px;
+  border-left: 1px solid var(--line);
+  padding-left: 12px;
+  scrollbar-width: thin;
+}
+
+.markdown-toc ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.markdown-toc li + li {
+  margin-top: 4px;
+}
+
+.markdown-toc-link {
+  display: block;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  padding-left: calc(var(--toc-depth, 0) * 12px);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-toc-link:hover {
+  color: var(--ink);
+}
+
+.markdown-toc-link:active {
+  color: var(--accent);
+}
+
+.markdown-toc-link[aria-current='location'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+@container (max-width: 1179px) {
+  .markdown-toc {
+    display: none;
+  }
 }
 
 .markdown-document :is(h1, h2, h3, h4, h5, h6) {
@@ -1527,9 +1644,12 @@ a:focus-visible {
 }
 
 @media (max-width: 700px) {
-  .markdown-document {
-    width: min(100% - 32px, 768px);
+  .markdown-reading-layout {
+    grid-template-columns: 16px minmax(0, 1fr) 16px;
     margin-top: 2.8rem;
+  }
+
+  .markdown-document {
     font-size: 1rem;
     line-height: 1.68;
   }

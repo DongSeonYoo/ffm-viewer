@@ -18,9 +18,42 @@ test('Markdown opens as a focused article rather than an editor', async ({ page 
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
   await expect(page.locator('.markdown-document pre')).toContainText('render');
   await expect(page.locator('textarea')).toHaveCount(0);
+  await expect(page.locator('.sidebar-outline')).not.toBeVisible();
+  await expect(page.locator('.markdown-toc')).toHaveCount(0);
 
   const article = await page.locator('.markdown-document').boundingBox();
   expect(article?.width).toBeLessThanOrEqual(768);
+});
+
+test('long Markdown uses a wide-screen reading rail instead of the left sidebar', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+t');
+  await pasteText(page, [
+    '# Guide',
+    '',
+    '## Start',
+    '',
+    'Read the start.',
+    '',
+    '### Details',
+    '',
+    'Read the details.',
+    '',
+    '## Finish',
+    '',
+    'Finish reading.',
+  ].join('\n'));
+
+  const toc = page.getByRole('navigation', { name: 'Document sections' });
+  await expect(toc).toBeVisible();
+  await expect(toc.locator('.markdown-toc-link')).toHaveText(['Start', 'Details', 'Finish']);
+  await expect(page.locator('.sidebar-outline')).not.toBeVisible();
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await expect(toc).not.toBeVisible();
 });
 
 test('JSON opens as formatted code with a key outline', async ({ page }) => {

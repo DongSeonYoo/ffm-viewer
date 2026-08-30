@@ -9,6 +9,7 @@ import type {
   Dispose,
   DocumentPayload,
   PathHandler,
+  RenamedDocument,
   ScratchRecovery,
 } from './desktop-bridge';
 
@@ -62,6 +63,10 @@ export function createTauriBridge(): DesktopBridge {
 
     readDocument(path) {
       return invoke<DocumentPayload>('read_document', { path });
+    },
+
+    renameDocument(path, stem) {
+      return invoke<RenamedDocument>('rename_document', { path, stem });
     },
 
     async watchDocument(path, onChange, onError) {

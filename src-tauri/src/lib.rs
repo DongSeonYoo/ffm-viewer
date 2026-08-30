@@ -196,6 +196,7 @@ pub fn run() {
             exit_application,
             mark_file_search_ready,
             document::read_document,
+            document::rename_document,
             document::write_document,
             document::read_local_image,
             open_requests::take_pending_open,
