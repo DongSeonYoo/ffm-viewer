@@ -1,5 +1,18 @@
 export type DocumentKind = 'markdown' | 'json' | 'text' | 'yaml' | 'toml' | 'image';
 
+export interface FolderEntry {
+  readonly path: string;
+  readonly name: string;
+  readonly directory: boolean;
+  readonly supported: boolean;
+}
+
+export interface FolderListing {
+  readonly path: string;
+  readonly name: string;
+  readonly entries: readonly FolderEntry[];
+}
+
 export interface DocumentPayload {
   readonly path: string;
   readonly name: string;
@@ -24,6 +37,7 @@ export interface ScratchRecovery {
 }
 
 export interface DesktopBridge {
+  readDirectory(path: string): Promise<FolderListing | null>;
   chooseDocuments(): Promise<readonly string[]>;
   readDocument(path: string): Promise<DocumentPayload>;
   renameDocument(path: string, stem: string): Promise<RenamedDocument>;

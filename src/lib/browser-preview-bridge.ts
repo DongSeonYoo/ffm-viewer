@@ -79,9 +79,9 @@ const SINGLE_FIXTURES = {
 } as const;
 
 export function createBrowserPreviewBridge(
-  fixture: keyof typeof SINGLE_FIXTURES | 'multi',
+  fixture: keyof typeof SINGLE_FIXTURES | 'multi' | 'folder',
 ): DesktopBridge {
-  const payloads: DocumentPayload[] = fixture === 'multi'
+  const payloads: DocumentPayload[] = fixture === 'multi' || fixture === 'folder'
     ? [
         MARKDOWN_FIXTURE,
         JSON_FIXTURE,
@@ -98,6 +98,13 @@ export function createBrowserPreviewBridge(
   let recovery: readonly ScratchRecovery[] = [];
 
   return {
+    readDirectory: async (path) => path === '/fixtures' ? {
+      path, name: 'Reading', entries: [
+        { path: '/fixtures/archive', name: 'archive', directory: true, supported: false },
+        ...payloads.map(({ path, name }) => ({ path, name, directory: false, supported: true })),
+        { path: '/fixtures/app.zip', name: 'app.zip', directory: false, supported: false },
+      ],
+    } : path === '/fixtures/archive' ? { path, name: 'archive', entries: [] } : null,
     chooseDocuments: async () => {
       const path = payloads[Math.min(nextChoice++, payloads.length - 1)]?.path;
       return path ? [path] : [];
@@ -124,6 +131,7 @@ export function createBrowserPreviewBridge(
     takePendingOpen: async () => {
       if (!pending) return [];
       pending = false;
+      if (fixture === 'folder') return ['/fixtures'];
       const path = payloads[0]?.path;
       return path ? [path] : [];
     },

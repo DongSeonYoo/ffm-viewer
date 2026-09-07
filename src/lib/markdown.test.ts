@@ -34,6 +34,14 @@ describe('renderMarkdown', () => {
     expect(html).toContain('&lt;tag&gt;&amp; value');
   });
 
+  it('preserves Mermaid source for lazy diagram hydration', () => {
+    const html = renderMarkdown('```mermaid\nflowchart LR\n  A --> B\n```');
+
+    expect(html).toContain('class="language-mermaid"');
+    expect(html).toContain('flowchart LR');
+    expect(html).toContain('A --&gt; B');
+  });
+
   it('does not execute or preserve raw HTML from a local document', () => {
     const html = renderMarkdown('<img src=x onerror="alert(1)">\n\n<script>alert(1)</script>');
 

@@ -9,7 +9,7 @@ async function bootstrap(): Promise<void> {
   const fixture = new URLSearchParams(window.location.search).get('fixture');
   if (
     import.meta.env.DEV &&
-    ['markdown', 'json', 'json-large', 'text', 'yaml', 'toml', 'image', 'multi']
+    ['markdown', 'json', 'json-large', 'text', 'yaml', 'toml', 'image', 'multi', 'folder']
       .includes(fixture ?? '')
   ) {
     const { createBrowserPreviewBridge } = await import('./lib/browser-preview-bridge');

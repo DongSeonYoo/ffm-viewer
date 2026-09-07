@@ -4,6 +4,7 @@ import {
   type CodeViewElement,
 } from './components/json-tree';
 import packageMetadata from '../package.json';
+import { createFolderTree } from './components/folder-tree';
 import type {
   DesktopBridge,
   DocumentKind,
@@ -547,6 +548,7 @@ export async function createApp(
   let startupWarning: string | undefined;
   let refreshQuickSwitcherResults: (() => void) | undefined;
   let quickSwitcherReturnFocus: HTMLElement | undefined;
+  let markdownTocVisible = true;
   const closingTabIds = new Set<string>();
   const renamingPaths = new Set<string>();
 
@@ -586,7 +588,21 @@ export async function createApp(
   openButton.setAttribute('aria-label', 'Open document');
   openButton.title = 'Open document (⌘O)';
   openButton.textContent = '+';
-  topbar.append(historyNav, commandCenterSlot, openButton);
+  const outlineToggle = document.createElement('button');
+  outlineToggle.type = 'button';
+  outlineToggle.className = 'toolbar-button document-outline-toggle';
+  outlineToggle.hidden = true;
+  outlineToggle.setAttribute('aria-pressed', 'true');
+  outlineToggle.setAttribute('aria-label', 'Hide document outline');
+  outlineToggle.title = 'Hide document outline';
+  const outlineToggleIcon = document.createElement('span');
+  outlineToggleIcon.className = 'document-outline-toggle-icon';
+  outlineToggleIcon.setAttribute('aria-hidden', 'true');
+  outlineToggle.append(outlineToggleIcon);
+  const toolbarActions = document.createElement('div');
+  toolbarActions.className = 'toolbar-actions';
+  toolbarActions.append(outlineToggle, openButton);
+  topbar.append(historyNav, commandCenterSlot, toolbarActions);
 
   const layout = document.createElement('div');
   layout.className = 'app-layout';
@@ -594,7 +610,11 @@ export async function createApp(
   sidebar.className = 'app-sidebar';
   const filesSection = createSidebarSection('Open files', 'files');
   const outlineSection = createSidebarSection('Outline', 'outline');
-  sidebar.append(filesSection.section, outlineSection.section);
+  const foldersSection = createSidebarSection('Folders', 'folders');
+  foldersSection.section.hidden = true;
+  const folderTree = createFolderTree(bridge, (path) => void queueDocument(path));
+  foldersSection.content.append(folderTree.element);
+  sidebar.append(filesSection.section, foldersSection.section, outlineSection.section);
 
   const workArea = document.createElement('section');
   workArea.className = 'work-area';
@@ -673,6 +693,7 @@ export async function createApp(
   };
 
   const destroyActiveView = () => {
+    document.querySelector('dialog.mermaid-lightbox')?.remove();
     markdownTocCleanup?.();
     markdownTocCleanup = undefined;
     outlineObserver?.disconnect();
@@ -695,6 +716,17 @@ export async function createApp(
     const message = activeTab()?.warning ?? startupWarning;
     warning.hidden = !message;
     warning.textContent = message ?? '';
+  };
+
+  const setMarkdownTocVisible = (visible: boolean) => {
+    markdownTocVisible = visible;
+    outlineToggle.setAttribute('aria-pressed', String(visible));
+    outlineToggle.setAttribute('aria-label', `${visible ? 'Hide' : 'Show'} document outline`);
+    outlineToggle.title = `${visible ? 'Hide' : 'Show'} document outline`;
+    const readingLayout = viewport.querySelector<HTMLElement>('.markdown-reading-layout');
+    const toc = readingLayout?.querySelector<HTMLElement>('.markdown-toc');
+    readingLayout?.classList.toggle('is-toc-collapsed', !visible);
+    if (toc) toc.hidden = !visible;
   };
 
   const recoverySnapshot = (excludedId?: string): ScratchRecovery[] => tabs
@@ -856,6 +888,7 @@ export async function createApp(
   };
 
   const renderChrome = () => {
+    folderTree.select(activeTab()?.payload.path ?? '');
     tablist.replaceChildren();
     filesSection.content.replaceChildren();
     for (const tab of tabs) {
@@ -1012,6 +1045,7 @@ export async function createApp(
     outlineSection.content.replaceChildren();
     outlineSection.count.textContent = '0';
     outlineSection.section.hidden = true;
+    outlineToggle.hidden = true;
     const state = document.createElement('section');
     state.className = 'error-state';
     state.setAttribute('role', 'alert');
@@ -1030,6 +1064,7 @@ export async function createApp(
     destroyActiveView();
     outlineSection.content.replaceChildren();
     outlineSection.count.textContent = '0';
+    outlineToggle.hidden = true;
     viewport.replaceChildren();
     viewport.scrollTop = 0;
     const tab = activeTab();
@@ -1066,6 +1101,7 @@ export async function createApp(
       article.className = 'markdown-document';
       article.innerHTML = renderMarkdown(tab.payload.content);
       const toc = createMarkdownToc(article);
+      readingLayout.classList.toggle('is-toc-collapsed', !toc || !markdownTocVisible);
       if (tab.source === 'file') {
         void hydrateLocalImages(
           article,
@@ -1083,8 +1119,20 @@ export async function createApp(
         if (/^(?:https?:|mailto:)/i.test(href)) void bridge.openExternal(href);
       });
       readingLayout.append(article);
-      if (toc) readingLayout.append(toc);
+      if (toc) {
+        toc.hidden = !markdownTocVisible;
+        readingLayout.append(toc);
+      }
       viewport.append(readingLayout);
+      outlineToggle.hidden = !toc;
+      if (article.querySelector('pre > code.language-mermaid')) {
+        const isCurrent = () => (
+          article.isConnected && renderId === renderSequence && activeId === tab.id
+        );
+        void import('./lib/mermaid')
+          .then(({ hydrateMermaidDiagrams }) => hydrateMermaidDiagrams(article, isCurrent))
+          .catch(() => undefined);
+      }
       requestAnimationFrame(() => {
         if (activeId === tab.id) viewport.scrollTop = tab.scrollTop;
       });
@@ -1633,6 +1681,32 @@ export async function createApp(
     return openQueue;
   }
 
+  let pathQueue = Promise.resolve();
+  function queuePath(path: string): Promise<void> {
+    pathQueue = pathQueue.then(() => openPath(path));
+    return pathQueue;
+  }
+
+  async function openPath(path: string): Promise<void> {
+    try {
+      const listing = await bridge.readDirectory(path);
+      if (!listing) {
+        await queueDocument(path);
+        return;
+      }
+      folderTree.add(listing);
+      foldersSection.section.hidden = false;
+      foldersSection.count.textContent = String(folderTree.size);
+      setSidebarCollapsed(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const tab = activeTab();
+      if (tab) tab.warning = message;
+      else startupWarning = message;
+      renderWarning();
+    }
+  }
+
   async function chooseDocuments(): Promise<void> {
     clearActiveHistoryDestination();
     const paths = await bridge.chooseDocuments();
@@ -1707,6 +1781,13 @@ export async function createApp(
       const option = THEME_OPTIONS.find(({ value }) => value === select.value);
       if (!option) return;
       persistThemePreference(option.value);
+      if (
+        activeTab()?.payload.kind === 'markdown'
+        && viewport.querySelector('.mermaid-diagram, code.language-mermaid')
+      ) {
+        snapshotScroll();
+        renderActive();
+      }
     });
 
     row.append(label, select);
@@ -2352,6 +2433,7 @@ export async function createApp(
 
   back.addEventListener('click', () => navigateHistory(-1));
   forward.addEventListener('click', () => navigateHistory(1));
+  outlineToggle.addEventListener('click', () => setMarkdownTocVisible(!markdownTocVisible));
   commandCenter.addEventListener('click', openFileSearch);
   openButton.addEventListener('click', () => void chooseDocuments());
 
@@ -2499,14 +2581,14 @@ export async function createApp(
   renderChrome();
   renderActive();
   await Promise.all([
-    bridge.onOpenRequested((path) => void queueDocument(path)),
-    bridge.onFileDropped((path) => void queueDocument(path)),
+    bridge.onOpenRequested((path) => void queuePath(path)),
+    bridge.onFileDropped((path) => void queuePath(path)),
     bridge.onCloseActiveTab(() => {
       closeActiveTabOrWindow();
     }),
     bridge.onCloseRequested(canCloseWindow),
   ]);
   const pendingPaths = await bridge.takePendingOpen();
-  for (const path of pendingPaths) await queueDocument(path);
+  for (const path of pendingPaths) await queuePath(path);
   await bridge.onSearchFiles(openFileSearch);
 }

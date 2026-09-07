@@ -8,6 +8,7 @@ import type {
   DocumentKind,
   Dispose,
   DocumentPayload,
+  FolderListing,
   PathHandler,
   RenamedDocument,
   ScratchRecovery,
@@ -43,6 +44,9 @@ export function createTauriBridge(): DesktopBridge {
   let recoveryWrite: Promise<void> = Promise.resolve();
 
   return {
+    readDirectory(path) {
+      return invoke<FolderListing | null>('read_directory', { path });
+    },
     async chooseDocuments() {
       const selected = await open({
         multiple: true,

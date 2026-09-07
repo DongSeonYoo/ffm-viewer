@@ -12,13 +12,27 @@ async function pasteText(page: Page, value: string): Promise<void> {
   }, value);
 }
 
+test('folder navigation opens files on demand and disables unsupported entries', async ({ page }) => {
+  await page.goto('/?fixture=folder');
+  await expect(page.locator('.folder-tree')).toBeVisible();
+  await expect(page.locator('[role="tab"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'app.zip', exact: true })).toBeDisabled();
+  await page.locator('.folder-tree summary', { hasText: 'archive' }).click();
+  await expect(page.locator('.folder-tree')).toContainText('Empty folder');
+  await page.getByRole('button', { name: 'quiet-document.md', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
+  await expect(page.locator('.folder-file[aria-current="page"]')).toHaveText('quiet-document.md');
+  await page.setViewportSize({ width: 540, height: 760 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(540);
+});
+
 test('Markdown opens as a focused article rather than an editor', async ({ page }) => {
   await page.goto('/?fixture=markdown');
 
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
   await expect(page.locator('.markdown-document pre')).toContainText('render');
   await expect(page.locator('textarea')).toHaveCount(0);
-  await expect(page.locator('[data-app-version]')).toHaveText('v0.4.0 · preview');
+  await expect(page.locator('[data-app-version]')).toHaveText('v0.5.0 · preview');
   await expect(page.locator('.sidebar-outline')).not.toBeVisible();
   await expect(page.locator('.markdown-toc')).toHaveCount(0);
 
@@ -53,8 +67,83 @@ test('long Markdown uses a wide-screen reading rail instead of the left sidebar'
   await expect(toc.locator('.markdown-toc-link')).toHaveText(['Start', 'Details', 'Finish']);
   await expect(page.locator('.sidebar-outline')).not.toBeVisible();
 
+  const app = await page.locator('.app-shell').boundingBox();
+  const article = page.locator('.markdown-document');
+  const openArticle = await article.boundingBox();
+  expect(Math.abs(
+    (openArticle?.x ?? 0) + (openArticle?.width ?? 0) / 2
+      - ((app?.x ?? 0) + (app?.width ?? 0) / 2),
+  )).toBeLessThanOrEqual(3);
+
+  await page.getByRole('button', { name: 'Hide document outline' }).click();
+  await expect(toc).not.toBeVisible();
+  const closedArticle = await article.boundingBox();
+  expect((closedArticle?.x ?? 0) - (openArticle?.x ?? 0)).toBeCloseTo(116, 0);
+
+  await page.keyboard.press('Control+b');
+  await expect(page.locator('.app-sidebar')).not.toBeVisible();
+  const noPanelsArticle = await article.boundingBox();
+  expect(Math.abs(
+    (noPanelsArticle?.x ?? 0) + (noPanelsArticle?.width ?? 0) / 2
+      - ((app?.x ?? 0) + (app?.width ?? 0) / 2),
+  )).toBeLessThanOrEqual(3);
+
+  await page.getByRole('button', { name: 'Show document outline' }).click();
+  await expect(toc).toBeVisible();
+  const rightOnlyArticle = await article.boundingBox();
+  expect((noPanelsArticle?.x ?? 0) - (rightOnlyArticle?.x ?? 0)).toBeCloseTo(116, 0);
+
   await page.setViewportSize({ width: 1200, height: 900 });
   await expect(toc).not.toBeVisible();
+});
+
+test('Mermaid blocks render locally while invalid diagrams keep their source', async ({ page }) => {
+  await page.goto('/?fixture=markdown');
+  await page.keyboard.press('Meta+t');
+  await pasteText(page, [
+    '# Diagrams',
+    '',
+    '```mermaid',
+    'flowchart LR',
+    '  Source --> Decision',
+    '```',
+    '',
+    '```mermaid',
+    'stateDiagram-v2',
+    '  [*] --> Ready',
+    '```',
+    '',
+    '```mermaid',
+    'sequenceDiagram',
+    '  Alice->>Bob: Hello',
+    '```',
+    '',
+    '```mermaid',
+    'erDiagram',
+    '  USER ||--o{ ORDER : places',
+    '```',
+    '',
+    '```mermaid',
+    'this is not a diagram',
+    '```',
+  ].join('\n'));
+
+  const diagrams = page.locator('.mermaid-diagram-image');
+  await expect(diagrams).toHaveCount(4);
+  await expect(diagrams.first()).toBeVisible();
+  for (const diagram of await diagrams.all()) {
+    await expect(diagram).toHaveAttribute('src', /^data:image\/svg\+xml/);
+  }
+  await expect(page.locator('pre.mermaid-diagram-error')).toContainText('this is not a diagram');
+
+  await diagrams.first().click();
+  const lightbox = page.locator('dialog.mermaid-lightbox');
+  await expect(lightbox).toBeVisible();
+  await page.getByRole('button', { name: 'Zoom in' }).click();
+  await expect(lightbox.locator('.mermaid-lightbox-image'))
+    .toHaveAttribute('style', 'width: 125%;');
+  await page.getByRole('button', { name: 'Close diagram viewer' }).click();
+  await expect(lightbox).toHaveCount(0);
 });
 
 test('JSON opens as formatted code with a key outline', async ({ page }) => {

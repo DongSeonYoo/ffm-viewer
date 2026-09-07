@@ -52,7 +52,7 @@ pub fn is_supported_path(path: &Path) -> bool {
 }
 
 pub fn dispatch_or_queue(app: &AppHandle, path: &Path) {
-    if !is_supported_path(path) {
+    if !path.is_dir() && !is_supported_path(path) {
         return;
     }
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());

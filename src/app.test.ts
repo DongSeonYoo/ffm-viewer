@@ -68,6 +68,7 @@ function createBridge(
   const bridge: DesktopBridge & {
     closeWindow: ReturnType<typeof vi.fn>;
   } = {
+    readDirectory: vi.fn().mockResolvedValue(null),
     chooseDocuments: vi.fn().mockResolvedValue([]),
     readDocument: vi.fn(async (path: string) => {
       const document = documents[path];
@@ -154,7 +155,7 @@ describe('createApp', () => {
     expect(document.querySelector('.empty-state')?.textContent).toBe('drop a file');
     expect(document.querySelector('.empty-state button')).toBeNull();
     expect(document.querySelector('.empty-state h1')).toBeNull();
-    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.4.0');
+    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.5.0');
     expect(Array.from(document.querySelectorAll('.sidebar-section-chevron'))
       .every(({ textContent }) => textContent === '')).toBe(true);
   });
@@ -249,6 +250,42 @@ describe('createApp', () => {
     expect(document.querySelector('.markdown-toc')).toBeNull();
   });
 
+  it('drops folders lazily, keeps unsupported names disabled, and opens selected files', async () => {
+    const payload = markdownDocument('# From a folder');
+    const { bridge } = createBridge({ [payload.path]: payload });
+    vi.mocked(bridge.readDirectory).mockImplementation(async (path) => {
+      if (path === '/tmp/project') return {
+        path, name: 'project', entries: [
+          { path: '/tmp/project/sub', name: 'sub', directory: true, supported: false },
+          { path: '/tmp/project/app.exe', name: 'app.exe', directory: false, supported: false },
+          { path: payload.path, name: payload.name, directory: false, supported: true },
+        ],
+      };
+      return { path, name: 'sub', entries: [] };
+    });
+    await createApp(document.querySelector('#app')!, bridge);
+    const drop = vi.mocked(bridge.onFileDropped).mock.calls[0]![0];
+    drop('/tmp/project');
+    await vi.waitFor(() => expect(document.querySelector('.folder-tree summary')?.textContent).toBe('project'));
+    expect(bridge.readDocument).not.toHaveBeenCalled();
+    expect(bridge.readDirectory).toHaveBeenCalledTimes(1);
+    const unsupported = document.querySelector<HTMLButtonElement>('[data-folder-file="/tmp/project/app.exe"]')!;
+    expect(unsupported.disabled).toBe(true);
+    unsupported.click();
+    expect(bridge.readDocument).not.toHaveBeenCalled();
+    const sub = document.querySelectorAll<HTMLDetailsElement>('.folder-tree details')[1]!;
+    sub.open = true;
+    await vi.waitFor(() => expect(sub.textContent).toContain('Empty folder'));
+    const file = document.querySelector<HTMLButtonElement>(`[data-folder-file="${payload.path}"]`)!;
+    file.click();
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document h1')?.textContent).toBe('From a folder'));
+    expect(file.getAttribute('aria-current')).toBe('page');
+    drop('/tmp/project');
+    await vi.waitFor(() => expect(bridge.readDirectory).toHaveBeenCalledTimes(3));
+    expect(document.querySelector('.sidebar-folders')?.children).toHaveLength(1);
+    expect(document.querySelector('[data-section-count="folders"]')?.textContent).toBe('1');
+  });
+
   it('shows substantial Markdown navigation only beside the reading surface', async () => {
     const payload = markdownDocument([
       '# Guide',
@@ -269,6 +306,33 @@ describe('createApp', () => {
     expect(Array.from(document.querySelectorAll('.markdown-toc-link'))
       .map(({ textContent }) => textContent)).toEqual(['Start', 'Details', 'Finish']);
     expect(document.querySelector('.markdown-toc')?.textContent).not.toContain('Guide');
+    const outlineToggle = document.querySelector<HTMLButtonElement>('.document-outline-toggle')!;
+    const readingLayout = document.querySelector('.markdown-reading-layout')!;
+    expect(outlineToggle.hidden).toBe(false);
+    expect(outlineToggle.getAttribute('aria-pressed')).toBe('true');
+
+    outlineToggle.click();
+
+    expect(readingLayout.classList.contains('is-toc-collapsed')).toBe(true);
+    expect(document.querySelector<HTMLElement>('.markdown-toc')?.hidden).toBe(true);
+    expect(outlineToggle.getAttribute('aria-label')).toBe('Show document outline');
+
+    outlineToggle.click();
+
+    expect(readingLayout.classList.contains('is-toc-collapsed')).toBe(false);
+    expect(document.querySelector<HTMLElement>('.markdown-toc')?.hidden).toBe(false);
+  });
+
+  it('removes an open Mermaid viewer when switching documents', async () => {
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    const dialog = document.createElement('dialog');
+    dialog.className = 'mermaid-lightbox';
+    document.body.append(dialog);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', metaKey: true }));
+
+    expect(document.querySelector('dialog.mermaid-lightbox')).toBeNull();
   });
 
   it('renders a JSON file as read-only code with a key outline', async () => {

@@ -1,4 +1,5 @@
 mod document;
+mod folders;
 mod open_requests;
 mod recovery;
 mod search;
@@ -196,6 +197,7 @@ pub fn run() {
             exit_application,
             mark_file_search_ready,
             document::read_document,
+            folders::read_directory,
             document::rename_document,
             document::write_document,
             document::read_local_image,
