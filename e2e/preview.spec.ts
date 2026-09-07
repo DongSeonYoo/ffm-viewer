@@ -32,7 +32,7 @@ test('Markdown opens as a focused article rather than an editor', async ({ page 
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
   await expect(page.locator('.markdown-document pre')).toContainText('render');
   await expect(page.locator('textarea')).toHaveCount(0);
-  await expect(page.locator('[data-app-version]')).toHaveText('v0.5.0 · preview');
+  await expect(page.locator('[data-app-version]')).toHaveText('v0.5.1 · preview');
   await expect(page.locator('.sidebar-outline')).not.toBeVisible();
   await expect(page.locator('.markdown-toc')).toHaveCount(0);
 
@@ -438,13 +438,15 @@ test('the horizontal tab strip keeps the active tab visible', async ({ page }) =
   await page.goto('/?fixture=markdown');
   for (let index = 0; index < 12; index += 1) await page.keyboard.press('Meta+n');
 
-  const strip = await page.locator('.document-tabs').boundingBox();
-  const active = await page.locator('.document-tab.is-active').boundingBox();
-
-  expect(active).not.toBeNull();
-  expect(strip).not.toBeNull();
-  expect(active!.x).toBeGreaterThanOrEqual(strip!.x);
-  expect(active!.x + active!.width).toBeLessThanOrEqual(strip!.x + strip!.width + 1);
+  // Automatic tab scrolling runs on the next animation frame.
+  await expect(async () => {
+    const strip = await page.locator('.document-tabs').boundingBox();
+    const active = await page.locator('.document-tab.is-active').boundingBox();
+    expect(active).not.toBeNull();
+    expect(strip).not.toBeNull();
+    expect(active!.x).toBeGreaterThanOrEqual(strip!.x);
+    expect(active!.x + active!.width).toBeLessThanOrEqual(strip!.x + strip!.width + 1);
+  }).toPass({ timeout: 5000 });
 });
 
 function contrastRatio(first: string, second: string): number {

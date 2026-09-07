@@ -155,7 +155,7 @@ describe('createApp', () => {
     expect(document.querySelector('.empty-state')?.textContent).toBe('drop a file');
     expect(document.querySelector('.empty-state button')).toBeNull();
     expect(document.querySelector('.empty-state h1')).toBeNull();
-    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.5.0');
+    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.5.1');
     expect(Array.from(document.querySelectorAll('.sidebar-section-chevron'))
       .every(({ textContent }) => textContent === '')).toBe(true);
   });
