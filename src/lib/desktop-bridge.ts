@@ -13,6 +13,19 @@ export interface FolderListing {
   readonly entries: readonly FolderEntry[];
 }
 
+export interface WorkspaceContentMatch {
+  readonly path: string;
+  readonly line: number;
+  readonly occurrence: number;
+  readonly preview: string;
+}
+
+export interface WorkspaceContentResults {
+  readonly matches: readonly WorkspaceContentMatch[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
 export interface DocumentPayload {
   readonly path: string;
   readonly name: string;
@@ -63,7 +76,10 @@ export interface DesktopBridge {
     query: string,
     refresh: boolean,
     extensions: readonly string[],
+    roots?: readonly string[],
   ): Promise<readonly string[]>;
+  searchWorkspaceContents(query: string, roots: readonly string[], refresh: boolean,
+    extensions: readonly string[]): Promise<WorkspaceContentResults>;
   closeWindow(): Promise<void>;
   onCloseActiveTab(handler: () => void): Promise<Dispose>;
   onSearchFiles(handler: () => void): Promise<Dispose>;

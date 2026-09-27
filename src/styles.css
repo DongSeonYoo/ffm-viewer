@@ -291,6 +291,9 @@ a:focus-visible,
 
 .folder-tree summary,
 .folder-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: 28px;
   border-radius: 4px;
   padding: 6px 8px;
@@ -311,12 +314,50 @@ a:focus-visible,
 }
 
 .folder-file {
-  display: block;
   width: 100%;
   border: 0;
   background: transparent;
   text-align: left;
+  padding-left: 22px;
 }
+
+.folder-tree summary::marker { content: ''; }
+.folder-tree summary::-webkit-details-marker { display: none; }
+
+.folder-chevron {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.folder-tree details[open] > summary .folder-chevron { transform: rotate(45deg); }
+
+.folder-entry-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ffm-file-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--ink-soft);
+}
+
+.ffm-icon-accent { stroke: var(--accent); }
+.ffm-folder-open { display: none; }
+.folder-tree details[open] > summary .ffm-folder-open { display: initial; }
+.folder-tree details[open] > summary .ffm-folder-closed { display: none; }
+.folder-tree details[open] > summary .ffm-folder-icon,
+.open-file.is-active > .ffm-file-icon,
+.folder-file[aria-current='page'] > .ffm-file-icon { color: var(--accent); }
+.folder-file:disabled .ffm-icon-accent { stroke: currentColor; }
 
 .folder-tree summary:hover,
 .folder-file:hover:not(:disabled),

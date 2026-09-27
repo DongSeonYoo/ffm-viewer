@@ -114,6 +114,7 @@ function createBridge(
       return () => undefined;
     }),
     searchDocuments: vi.fn().mockResolvedValue([]),
+    searchWorkspaceContents: vi.fn().mockResolvedValue({ matches: [], skipped: 0, truncated: false }),
     closeWindow: vi.fn().mockResolvedValue(undefined),
   };
 
@@ -155,7 +156,7 @@ describe('createApp', () => {
     expect(document.querySelector('.empty-state')?.textContent).toBe('drop a file');
     expect(document.querySelector('.empty-state button')).toBeNull();
     expect(document.querySelector('.empty-state h1')).toBeNull();
-    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.5.1');
+    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.6.0');
     expect(Array.from(document.querySelectorAll('.sidebar-section-chevron'))
       .every(({ textContent }) => textContent === '')).toBe(true);
   });
@@ -269,6 +270,31 @@ describe('createApp', () => {
     await vi.waitFor(() => expect(document.querySelector('.folder-tree summary')?.textContent).toBe('project'));
     expect(bridge.readDocument).not.toHaveBeenCalled();
     expect(bridge.readDirectory).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+    expect(document.querySelector('[data-quick-switcher]')).not.toBeNull();
+    vi.mocked(bridge.searchWorkspaceContents).mockResolvedValue({ matches: [
+      { path: payload.path, line: 1, occurrence: 0, preview: 'From a folder' },
+    ], skipped: 0, truncated: false });
+    const contents = document.querySelector<HTMLInputElement>('.content-search input');
+    contents!.value = 'folder';
+    contents!.dispatchEvent(new Event('input'));
+    await vi.waitFor(() => expect(document.querySelector('.content-search-result')?.textContent).toContain('From a folder'));
+    expect(bridge.readDocument).not.toHaveBeenCalled();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true }));
+    const search = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
+    search.value = 'readme';
+    search.dispatchEvent(new Event('input'));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenCalledWith(
+      'readme', true, ALL_SEARCH_EXTENSIONS, ['/tmp/project'],
+    ));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: true, shiftKey: true }));
+    const globalInput = document.querySelector<HTMLInputElement>('[data-file-search-input]')!;
+    globalInput.value = 'readme';
+    globalInput.dispatchEvent(new Event('input'));
+    await vi.waitFor(() => expect(bridge.searchDocuments).toHaveBeenLastCalledWith('readme', true, ALL_SEARCH_EXTENSIONS));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     const unsupported = document.querySelector<HTMLButtonElement>('[data-folder-file="/tmp/project/app.exe"]')!;
     expect(unsupported.disabled).toBe(true);
     unsupported.click();

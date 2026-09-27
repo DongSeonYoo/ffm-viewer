@@ -16,10 +16,22 @@ test('folder navigation opens files on demand and disables unsupported entries',
   await page.goto('/?fixture=folder');
   await expect(page.locator('.folder-tree')).toBeVisible();
   await expect(page.locator('[role="tab"]')).toHaveCount(0);
+  await page.keyboard.press('Meta+k');
+  await page.getByRole('combobox', { name: 'Search folder contents' }).fill('calm');
+  await expect(page.locator('.content-search-result')).toContainText('calm');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
+  await expect(page.locator('.content-search')).toHaveCount(0);
+  await page.keyboard.press('Meta+p');
+  await expect(page.getByRole('search', { name: 'Search files in folders' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+Shift+p');
+  await expect(page.getByRole('search', { name: 'Search files on this Mac' })).toBeVisible();
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'app.zip', exact: true })).toBeDisabled();
   await page.locator('.folder-tree summary', { hasText: 'archive' }).click();
   await expect(page.locator('.folder-tree')).toContainText('Empty folder');
-  await page.getByRole('button', { name: 'quiet-document.md', exact: true }).click();
+  await page.locator('.folder-tree').getByRole('button', { name: 'quiet-document.md', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
   await expect(page.locator('.folder-file[aria-current="page"]')).toHaveText('quiet-document.md');
   await page.setViewportSize({ width: 540, height: 760 });
@@ -32,7 +44,7 @@ test('Markdown opens as a focused article rather than an editor', async ({ page 
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
   await expect(page.locator('.markdown-document pre')).toContainText('render');
   await expect(page.locator('textarea')).toHaveCount(0);
-  await expect(page.locator('[data-app-version]')).toHaveText('v0.5.1 · preview');
+  await expect(page.locator('[data-app-version]')).toHaveText('v0.6.0 · preview');
   await expect(page.locator('.sidebar-outline')).not.toBeVisible();
   await expect(page.locator('.markdown-toc')).toHaveCount(0);
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import html from '../../index.html?raw';
 import capabilities from '../../src-tauri/capabilities/default.json';
-import betaConfig from '../../src-tauri/tauri.beta.conf.json';
 import tauriConfig from '../../src-tauri/tauri.conf.json';
 import devConfig from '../../src-tauri/tauri.dev.conf.json';
 
@@ -43,19 +42,16 @@ describe('desktop CSP', () => {
     ]);
   });
 
-  it('keeps production, beta, and dev as separate app channels', () => {
+  it('keeps the public app and diagnostics-enabled dev app separate', () => {
     expect([
       [tauriConfig.productName, tauriConfig.identifier],
-      [betaConfig.productName, betaConfig.identifier],
       [devConfig.productName, devConfig.identifier],
     ]).toEqual([
       ['FFM Viewer', 'io.github.dongseonyoo.ffm-viewer'],
-      ['FFM_beta', 'io.github.dongseonyoo.ffm-viewer.beta'],
       ['FFM_dev', 'io.github.dongseonyoo.ffm-viewer.dev'],
     ]);
     expect(tauriConfig.app.windows[0]?.devtools).toBe(false);
-    expect(betaConfig.app.windows[0]?.devtools).toBe(false);
-    for (const config of [tauriConfig, betaConfig, devConfig]) {
+    for (const config of [tauriConfig, devConfig]) {
       expect(config.app.windows[0]?.titleBarStyle).toBe('Overlay');
       expect(config.app.windows[0]?.hiddenTitle).toBe(true);
     }

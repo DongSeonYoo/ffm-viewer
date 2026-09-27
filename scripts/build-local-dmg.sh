@@ -3,14 +3,6 @@ set -eu
 
 channel=${1:-}
 case "$channel" in
-  beta)
-    app_name="FFM_beta"
-    bundle_id="io.github.dongseonyoo.ffm-viewer.beta"
-    config_path="src-tauri/tauri.beta.conf.json"
-    diagnostics=0
-    install_dir="${FFM_BETA_INSTALL_DIR:-/Applications}"
-    skip_launch="${FFM_BETA_SKIP_LAUNCH:-0}"
-    ;;
   dev)
     app_name="FFM_dev"
     bundle_id="io.github.dongseonyoo.ffm-viewer.dev"
@@ -20,7 +12,7 @@ case "$channel" in
     skip_launch="${FFM_DEV_SKIP_LAUNCH:-0}"
     ;;
   *)
-    echo "Usage: $0 beta|dev" >&2
+    echo "Usage: $0 dev" >&2
     exit 2
     ;;
 esac

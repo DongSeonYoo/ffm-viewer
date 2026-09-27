@@ -205,6 +205,7 @@ pub fn run() {
             recovery::load_recovery,
             recovery::persist_recovery,
             search::search_documents,
+            search::search_workspace_contents,
             watch::watch_document,
         ])
         .setup(|app| {

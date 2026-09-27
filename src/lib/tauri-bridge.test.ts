@@ -162,6 +162,7 @@ describe('createTauriBridge', () => {
     tauri.eventHandlers.get('search-files-requested')?.();
 
     expect(handler).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledWith();
   });
 
   it('replays a file-search shortcut queued before the listener was ready', async () => {

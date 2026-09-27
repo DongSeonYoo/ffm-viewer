@@ -1,6 +1,9 @@
 use frizbee::{CaseMatching, Config, Matcher};
 use ignore::{DirEntry, WalkBuilder, WalkState};
+use serde::Serialize;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use unicode_normalization::UnicodeNormalization;
 
@@ -14,6 +17,8 @@ struct Candidate {
 }
 
 struct CachedCandidates {
+    roots: Vec<PathBuf>,
+    workspace: bool,
     extensions: Vec<String>,
     candidates: Vec<Candidate>,
 }
@@ -27,6 +32,7 @@ impl AsRef<str> for Candidate {
 #[derive(Clone, Default)]
 pub struct SearchState {
     cache: Arc<Mutex<Option<CachedCandidates>>>,
+    content_generation: Arc<AtomicU64>,
 }
 
 struct Collector<'a> {
@@ -118,14 +124,25 @@ fn candidate(entry: &DirEntry, root: &Path, extensions: &[String]) -> Option<Can
     })
 }
 
-fn collect_candidates(root: &Path, extensions: &[String]) -> Vec<Candidate> {
+fn collect_candidates_for_scope(
+    root: &Path,
+    extensions: &[String],
+    workspace: bool,
+) -> Vec<Candidate> {
     let candidates = Mutex::new(Vec::new());
     let mut builder = WalkBuilder::new(root);
     builder
-        .standard_filters(true)
+        .standard_filters(!workspace)
         .follow_links(false)
         .threads(4)
-        .filter_entry(include_entry);
+        .filter_entry(move |entry| {
+            if workspace {
+                entry.depth() == 0
+                    || !matches!(entry.file_name().to_str(), Some(".git" | "node_modules"))
+            } else {
+                include_entry(entry)
+            }
+        });
     builder.build_parallel().run(|| {
         let mut collector = Collector {
             candidates: &candidates,
@@ -179,6 +196,7 @@ fn match_candidates(candidates: &[Candidate], query: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 fn search_documents_in(
     state: &SearchState,
     root: &Path,
@@ -186,12 +204,59 @@ fn search_documents_in(
     refresh: bool,
     extensions: Vec<String>,
 ) -> Result<Vec<String>, String> {
+    search_documents_at_roots(
+        state,
+        &[root.to_path_buf()],
+        query,
+        refresh,
+        extensions,
+        false,
+    )
+}
+
+fn refresh_candidates(
+    cache: &mut Option<CachedCandidates>,
+    roots: &[PathBuf],
+    extensions: &[String],
+    workspace: bool,
+    refresh: bool,
+) {
+    if refresh
+        || cache.as_ref().is_none_or(|cached| {
+            cached.extensions != extensions
+                || cached.roots != roots
+                || cached.workspace != workspace
+        })
+    {
+        let mut candidates: Vec<_> = roots
+            .iter()
+            .flat_map(|root| collect_candidates_for_scope(root, extensions, workspace))
+            .collect();
+        candidates.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        candidates.dedup_by(|a, b| a.path == b.path);
+        *cache = Some(CachedCandidates {
+            roots: roots.to_vec(),
+            workspace,
+            extensions: extensions.to_vec(),
+            candidates,
+        });
+    }
+}
+
+fn search_documents_at_roots(
+    state: &SearchState,
+    roots: &[PathBuf],
+    query: &str,
+    refresh: bool,
+    extensions: Vec<String>,
+    workspace: bool,
+) -> Result<Vec<String>, String> {
     let query = validate_query(query)?.to_owned();
     if query.is_empty() || extensions.is_empty() {
         return Ok(Vec::new());
     }
     let extensions = normalize_extensions(extensions)?;
-    if !root.is_absolute() {
+    if roots.iter().any(|root| !root.is_absolute()) {
         return Err("The search root must be an absolute path.".into());
     }
     let query = query.nfc().collect::<String>();
@@ -199,16 +264,7 @@ fn search_documents_in(
         .cache
         .lock()
         .map_err(|_| "The filename cache is unavailable.".to_string())?;
-    if refresh
-        || cache
-            .as_ref()
-            .is_none_or(|cached| cached.extensions != extensions)
-    {
-        cache.replace(CachedCandidates {
-            candidates: collect_candidates(root, &extensions),
-            extensions,
-        });
-    }
+    refresh_candidates(&mut cache, roots, &extensions, workspace, refresh);
     Ok(match_candidates(
         &cache
             .as_ref()
@@ -233,19 +289,177 @@ pub async fn search_documents(
     query: String,
     refresh: bool,
     extensions: Vec<String>,
+    roots: Option<Vec<String>>,
     state: tauri::State<'_, SearchState>,
 ) -> Result<Vec<String>, String> {
     let query = validate_query(&query)?.to_owned();
     if query.is_empty() || extensions.is_empty() {
         return Ok(Vec::new());
     }
-    let root = home_root()?;
+    let workspace = roots.is_some();
+    let roots = match roots {
+        Some(roots) => workspace_roots(roots)?,
+        None => vec![home_root()?],
+    };
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        search_documents_in(&state, &root, &query, refresh, extensions)
+        search_documents_at_roots(&state, &roots, &query, refresh, extensions, workspace)
     })
     .await
     .map_err(|error| format!("Filename search task failed: {error}"))?
+}
+
+fn workspace_roots(paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
+    if paths.is_empty() {
+        return Err("Open a folder to search its contents.".into());
+    }
+    let mut roots = Vec::new();
+    for path in paths {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return Err("The search root must be an absolute path.".into());
+        }
+        let path = path
+            .canonicalize()
+            .map_err(|_| "A workspace folder is unavailable.")?;
+        if !path.is_dir() {
+            return Err("The search root must be a folder.".into());
+        }
+        roots.push(path);
+    }
+    roots.sort();
+    roots.dedup();
+    Ok(roots)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContentMatch {
+    path: String,
+    line: usize,
+    occurrence: usize,
+    preview: String,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct ContentResults {
+    matches: Vec<ContentMatch>,
+    skipped: usize,
+    truncated: bool,
+}
+
+fn search_content_in(
+    state: &SearchState,
+    roots: &[PathBuf],
+    query: &str,
+    refresh: bool,
+    extensions: Vec<String>,
+    generation: u64,
+) -> Result<ContentResults, String> {
+    let query = validate_query(query)?.to_lowercase();
+    let mut result = ContentResults::default();
+    if query.is_empty() {
+        return Ok(result);
+    }
+    let extensions = normalize_extensions(extensions)?
+        .into_iter()
+        .filter(|extension| {
+            !matches!(
+                crate::document::classify_extension(Path::new(&format!("file.{extension}"))),
+                Ok(crate::document::DocumentKind::Image)
+            )
+        })
+        .collect::<Vec<_>>();
+    if extensions.is_empty() {
+        return Ok(result);
+    }
+    let paths = {
+        let mut cache = state
+            .cache
+            .lock()
+            .map_err(|_| "The filename cache is unavailable.")?;
+        refresh_candidates(&mut cache, roots, &extensions, true, refresh);
+        cache
+            .as_ref()
+            .unwrap()
+            .candidates
+            .iter()
+            .map(|c| c.path.clone())
+            .collect::<Vec<_>>()
+    };
+    for path in paths {
+        if state.content_generation.load(Ordering::Relaxed) != generation {
+            break;
+        }
+        let Ok(file) = std::fs::File::open(&path) else {
+            result.skipped += 1;
+            continue;
+        };
+        if file.metadata().map_or(true, |m| {
+            !m.is_file() || m.len() > crate::document::MAX_DOCUMENT_BYTES
+        }) {
+            result.skipped += 1;
+            continue;
+        }
+        let mut bytes = Vec::new();
+        if file
+            .take(crate::document::MAX_DOCUMENT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
+            result.skipped += 1;
+            continue;
+        }
+        if bytes.len() as u64 > crate::document::MAX_DOCUMENT_BYTES {
+            result.skipped += 1;
+            continue;
+        }
+        let Ok(content) = String::from_utf8(bytes) else {
+            result.skipped += 1;
+            continue;
+        };
+        let mut occurrence = 0;
+        for (line, text) in content.lines().enumerate() {
+            if state.content_generation.load(Ordering::Relaxed) != generation {
+                return Ok(result);
+            }
+            let lower = text.to_lowercase();
+            if let Some(offset) = lower.find(&query) {
+                let start = lower[..offset].chars().count().saturating_sub(60);
+                let preview: String = text.chars().skip(start).take(200).collect();
+                result.matches.push(ContentMatch {
+                    path: path.clone(),
+                    line: line + 1,
+                    occurrence,
+                    preview,
+                });
+                occurrence += lower.matches(&query).count();
+                if result.matches.len() == MAX_RESULTS {
+                    result.truncated = true;
+                    return Ok(result);
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn search_workspace_contents(
+    query: String,
+    roots: Vec<String>,
+    refresh: bool,
+    extensions: Vec<String>,
+    state: tauri::State<'_, SearchState>,
+) -> Result<ContentResults, String> {
+    validate_query(&query)?;
+    let roots = workspace_roots(roots)?;
+    let state = state.inner().clone();
+    let generation = state.content_generation.fetch_add(1, Ordering::Relaxed) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        search_content_in(&state, &roots, &query, refresh, extensions, generation)
+    })
+    .await
+    .map_err(|_| "Content search could not be completed.".to_string())?
 }
 
 #[cfg(test)]
@@ -256,6 +470,74 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn workspace_search_changes_cache_scope_and_includes_unexpanded_folders() {
+        let first = Fixture::new();
+        let second = Fixture::new();
+        let expected = first.file("deep/.config/Music/needle.md");
+        let outside = second.file("needle.md");
+        let state = SearchState::default();
+        assert_eq!(
+            search(&state, &second.root, "needle", true),
+            vec![outside.to_string_lossy()]
+        );
+        let result = super::search_documents_at_roots(
+            &state,
+            &[first.root.clone()],
+            "needle",
+            false,
+            all_extensions(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(result, vec![expected.to_string_lossy()]);
+        assert!(super::workspace_roots(vec![]).is_err());
+        assert!(super::workspace_roots(vec!["relative".into()]).is_err());
+    }
+
+    #[test]
+    fn workspace_contents_find_nested_lines_and_report_skipped_files() {
+        let fixture = Fixture::new();
+        let path = fixture.file("deep/notes.md");
+        fs::write(&path, "first\nNeedle twice needle\nlast needle").unwrap();
+        fixture.file("other.png");
+        let large = fixture.file("large.txt");
+        fs::File::create(large)
+            .unwrap()
+            .set_len(crate::document::MAX_DOCUMENT_BYTES + 1)
+            .unwrap();
+        let state = SearchState::default();
+        let result = super::search_content_in(
+            &state,
+            &[fixture.root.clone()],
+            "needle",
+            true,
+            all_extensions(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(result.matches.len(), 2);
+        assert_eq!(result.matches[0].path, path.to_string_lossy());
+        assert_eq!(result.matches[0].line, 2);
+        assert_eq!(result.matches[1].occurrence, 2);
+        assert_eq!(result.skipped, 1);
+        assert!(!result.truncated);
+        state
+            .content_generation
+            .store(1, std::sync::atomic::Ordering::Relaxed);
+        assert!(super::search_content_in(
+            &state,
+            &[fixture.root.clone()],
+            "needle",
+            false,
+            all_extensions(),
+            0
+        )
+        .unwrap()
+        .matches
+        .is_empty());
+    }
 
     struct Fixture {
         root: PathBuf,

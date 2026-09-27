@@ -5,11 +5,13 @@ import {
 } from './components/json-tree';
 import packageMetadata from '../package.json';
 import { createFolderTree } from './components/folder-tree';
+import { createFileIcon } from './components/file-icon';
 import type {
   DesktopBridge,
   DocumentKind,
   DocumentPayload,
   ScratchRecovery,
+  WorkspaceContentMatch,
 } from './lib/desktop-bridge';
 import { formatJsonDocument } from './lib/json-document';
 import { renderMarkdown } from './lib/markdown';
@@ -912,7 +914,7 @@ export async function createApp(
         event.stopPropagation();
         beginTabRename(tab, 'sidebar');
       });
-      fileButton.append(type.cloneNode(true), fileName);
+      fileButton.append(createFileIcon(tab.payload.name, tab.payload.kind), fileName);
       if (tab.dirty) {
         const dirty = document.createElement('span');
         dirty.className = 'open-file-dirty';
@@ -1695,6 +1697,10 @@ export async function createApp(
         return;
       }
       folderTree.add(listing);
+      closeFileSearch();
+      closeQuickSwitcher();
+      commandCenter.querySelector('span:nth-child(2)')!.textContent = 'Search files in folders…';
+      commandCenter.title = 'Search folders (⌘P) · Search this Mac (⇧⌘P)';
       foldersSection.section.hidden = false;
       foldersSection.count.textContent = String(folderTree.size);
       setSidebarCollapsed(false);
@@ -1802,7 +1808,7 @@ export async function createApp(
     searchTitle.id = 'search-file-types-title';
     searchTitle.textContent = 'File search';
     const searchDescription = document.createElement('p');
-    searchDescription.textContent = 'File types shown in ⌘P';
+    searchDescription.textContent = 'File types included in file and folder-content searches';
     searchCopy.append(searchTitle, searchDescription);
     const allLabel = document.createElement('label');
     allLabel.className = 'settings-file-type settings-file-type-all';
@@ -1910,7 +1916,7 @@ export async function createApp(
     commandCenter.hidden = false;
   };
 
-  const openFileSearch = () => {
+  const openFileSearch = (global = false) => {
     clearActiveHistoryDestination();
     closeSettings();
     closeQuickSwitcher();
@@ -1919,18 +1925,19 @@ export async function createApp(
       ? document.activeElement
       : undefined;
     const extensions = selectedSearchExtensions(enabledSearchFormats);
+    const roots = !global && folderTree.size > 0 ? folderTree.paths : undefined;
     commandCenter.hidden = true;
 
     const surface = document.createElement('section');
     surface.className = 'file-quick-open';
     surface.dataset.fileSearch = '';
     surface.setAttribute('role', 'search');
-    surface.setAttribute('aria-label', 'Search files on this Mac');
+    surface.setAttribute('aria-label', roots ? 'Search files in folders' : 'Search files on this Mac');
     const input = document.createElement('input');
     disableWritingAssistance(input);
     input.className = 'quick-switcher-input';
     input.dataset.fileSearchInput = '';
-    input.placeholder = 'Search files by name';
+    input.placeholder = roots ? 'Search folder files by name' : 'Search files on this Mac by name';
     input.setAttribute('aria-label', 'Search files by name');
     input.setAttribute('role', 'combobox');
     input.setAttribute('aria-autocomplete', 'list');
@@ -2013,7 +2020,9 @@ export async function createApp(
         if (request !== revision) return;
         const refresh = refreshPending;
         try {
-          const paths = await bridge.searchDocuments(query, refresh, extensions);
+          const paths = roots
+            ? await bridge.searchDocuments(query, refresh, extensions, roots)
+            : await bridge.searchDocuments(query, refresh, extensions);
           if (refresh) refreshPending = false;
           if (request === revision) renderResults(paths);
         } catch {
@@ -2171,7 +2180,7 @@ export async function createApp(
     closeFileSearch();
     closeQuickSwitcher();
     closeDocumentSearch();
-    if (tabs.length === 0) return;
+    if (tabs.length === 0 && folderTree.size === 0) return;
     quickSwitcherReturnFocus = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : undefined;
@@ -2182,13 +2191,15 @@ export async function createApp(
     box.className = 'quick-switcher-box content-search-box';
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
-    box.setAttribute('aria-label', 'Search open tab contents');
+    const roots = folderTree.paths;
+    const workspace = roots.length > 0;
+    box.setAttribute('aria-label', workspace ? 'Search folder contents' : 'Search open tab contents');
     const input = document.createElement('input');
     disableWritingAssistance(input);
     input.className = 'quick-switcher-input';
     input.dataset.openTabSearchInput = '';
-    input.placeholder = 'Search all open documents…';
-    input.setAttribute('aria-label', 'Search all open documents');
+    input.placeholder = workspace ? 'Search documents in folders…' : 'Search all open documents…';
+    input.setAttribute('aria-label', workspace ? 'Search folder contents' : 'Search all open documents');
     input.setAttribute('role', 'combobox');
     input.setAttribute('aria-autocomplete', 'list');
     input.setAttribute('aria-expanded', 'true');
@@ -2204,6 +2215,9 @@ export async function createApp(
     const documents = new Map<string, OpenTabSearchDocument>();
     let activeIndex = 0;
     let matches: OpenTabSearchMatch[] = [];
+    let searchRevision = 0;
+    let searchTimer: number | undefined;
+    let refreshWorkspace = true;
 
     const items = () => Array.from(
       list.querySelectorAll<HTMLElement>('.quick-switcher-item'),
@@ -2272,10 +2286,93 @@ export async function createApp(
       else reveal();
     };
 
+    const revealWorkspaceMatch = async (hit: WorkspaceContentMatch, query: string) => {
+      closeQuickSwitcher();
+      await queueDocument(hit.path);
+      const tab = activeTab();
+      if (!tab || tab.payload.path !== hit.path) return;
+      const found = findOpenTabMatches([tab], query, new Map());
+      let match = found[0];
+      for (const candidate of found) {
+        const occurrence = candidate.kind === 'markdown' ? candidate.occurrence
+          : [...codeSource(tab).slice(0, candidate.from).matchAll(new RegExp(escapeRegExp(query), 'giu'))].length;
+        if (occurrence > hit.occurrence) break;
+        match = candidate;
+      }
+      if (match) revealMatch(match);
+    };
+
+    const searchWorkspace = async (query: string, revision: number) => {
+      if (!overlay.isConnected || revision !== searchRevision) return;
+      try {
+        const result = await bridge.searchWorkspaceContents(query, roots, refreshWorkspace,
+          selectedSearchExtensions(enabledSearchFormats));
+        if (!overlay.isConnected || revision !== searchRevision) return;
+        refreshWorkspace = false;
+        list.replaceChildren();
+        const groups = new Map<string, HTMLElement>();
+        for (const [index, hit] of result.matches.entries()) {
+          let group = groups.get(hit.path);
+          if (!group) {
+            group = document.createElement('section');
+            group.className = 'content-search-group';
+            group.dataset.contentSearchGroup = hit.path;
+            const header = document.createElement('header');
+            header.className = 'content-search-group-header';
+            const type = document.createElement('span');
+            type.className = 'document-type';
+            type.textContent = fileType(hit.path);
+            const title = document.createElement('span');
+            title.className = 'content-search-group-title';
+            const name = document.createElement('strong');
+            name.textContent = fileName(hit.path);
+            const location = document.createElement('small');
+            location.textContent = hit.path;
+            title.append(name, location);
+            header.append(type, title);
+            group.append(header);
+            groups.set(hit.path, group);
+            list.append(group);
+          }
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'quick-switcher-item content-search-result';
+          item.id = `workspace-search-result-${index}`;
+          item.setAttribute('role', 'option');
+          item.setAttribute('aria-selected', 'false');
+          item.tabIndex = -1;
+          const preview = document.createElement('span');
+          preview.className = 'content-search-preview';
+          preview.textContent = `${hit.line}: ${hit.preview}`;
+          item.append(preview);
+          item.addEventListener('click', () => void revealWorkspaceMatch(hit, query));
+          group.append(item);
+        }
+        summary.textContent = `${result.matches.length} results in ${groups.size} documents`
+          + (result.truncated ? ' · Search limit reached; narrow your query' : '')
+          + (result.skipped ? ` · ${result.skipped} files skipped (unreadable or over 50 MB)` : '');
+        if (result.matches.length) updateActiveResult(0);
+        else renderMessage('No matches in folders.');
+      } catch {
+        if (overlay.isConnected && revision === searchRevision) {
+          summary.textContent = 'Folder search unavailable';
+          renderMessage('Check folder access and try again.');
+        }
+      }
+    };
+
     const renderResults = () => {
+      const revision = ++searchRevision;
+      if (searchTimer !== undefined) window.clearTimeout(searchTimer);
       list.replaceChildren();
       activeIndex = 0;
       const query = input.value.trim();
+      if (workspace) {
+        summary.textContent = `${roots.length} folders · excludes .git and node_modules`;
+        renderMessage(query ? 'Searching…' : 'Type to search folder contents.');
+        if (query) searchTimer = window.setTimeout(() => void searchWorkspace(query, revision), 120);
+        return;
+      }
       if (!query) {
         matches = [];
         summary.textContent = `${tabs.length} open ${tabs.length === 1 ? 'document' : 'documents'}`;
@@ -2396,6 +2493,7 @@ export async function createApp(
       if (event.key === 'Enter') {
         event.preventDefault();
         const selected = items()[activeIndex];
+        if (workspace) { selected?.click(); return; }
         const matchIndex = Number(selected?.dataset.openTabSearchResult);
         const action = SCRATCH_VIEW_ACTIONS.find(
           ({ kind }) => kind === selected?.dataset.quickActionKind,
@@ -2434,7 +2532,7 @@ export async function createApp(
   back.addEventListener('click', () => navigateHistory(-1));
   forward.addEventListener('click', () => navigateHistory(1));
   outlineToggle.addEventListener('click', () => setMarkdownTocVisible(!markdownTocVisible));
-  commandCenter.addEventListener('click', openFileSearch);
+  commandCenter.addEventListener('click', () => openFileSearch());
   openButton.addEventListener('click', () => void chooseDocuments());
 
   if (activeKeydownListener) window.removeEventListener('keydown', activeKeydownListener, true);
@@ -2488,9 +2586,9 @@ export async function createApp(
       openQuickSwitcher();
       return;
     }
-    if (command && !event.altKey && !event.shiftKey && isKey(event, 'KeyP', 'p')) {
+    if (command && !event.altKey && isKey(event, 'KeyP', 'p')) {
       event.preventDefault();
-      openFileSearch();
+      openFileSearch(event.shiftKey);
       return;
     }
     if (command && !event.altKey && !event.shiftKey && isKey(event, 'KeyF', 'f')) {

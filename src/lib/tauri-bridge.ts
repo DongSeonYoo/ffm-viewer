@@ -12,6 +12,7 @@ import type {
   PathHandler,
   RenamedDocument,
   ScratchRecovery,
+  WorkspaceContentResults,
 } from './desktop-bridge';
 
 interface PathEvent {
@@ -167,8 +168,12 @@ export function createTauriBridge(): DesktopBridge {
       return queued;
     },
 
-    searchDocuments(query, refresh, extensions) {
-      return invoke<string[]>('search_documents', { query, refresh, extensions });
+    searchDocuments(query, refresh, extensions, roots) {
+      return invoke<string[]>('search_documents', { query, refresh, extensions, ...(roots ? { roots } : {}) });
+    },
+
+    searchWorkspaceContents(query, roots, refresh, extensions) {
+      return invoke<WorkspaceContentResults>('search_workspace_contents', { query, roots, refresh, extensions });
     },
 
     closeWindow() {
@@ -209,7 +214,7 @@ export function createTauriBridge(): DesktopBridge {
     },
 
     async onSearchFiles(handler) {
-      const unlisten = await listen('search-files-requested', handler);
+      const unlisten = await listen('search-files-requested', () => handler());
       if (await invoke<boolean>('mark_file_search_ready')) handler();
       return normalizeDispose(unlisten);
     },

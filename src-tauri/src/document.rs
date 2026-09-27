@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Component, Path};
 
-const MAX_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
+pub(crate) const MAX_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_RENAME_STEM_BYTES: usize = 240;
 

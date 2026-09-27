@@ -145,7 +145,15 @@ export function createBrowserPreviewBridge(
     persistRecovery: async (scratches) => {
       recovery = scratches.map((scratch) => ({ ...scratch }));
     },
-    searchDocuments: async (query, _refresh, extensions) => payloads
+    searchWorkspaceContents: async (query, roots) => ({
+      matches: payloads.filter(({ path }) => roots.some((root) => path.startsWith(`${root}/`)))
+        .flatMap(({ path, content }) => content.split('\n').flatMap((line, index) =>
+          line.toLowerCase().includes(query.toLowerCase())
+            ? [{ path, line: index + 1, occurrence: 0, preview: line }] : [])),
+      skipped: 0, truncated: false,
+    }),
+    searchDocuments: async (query, _refresh, extensions, roots) => payloads
+      .filter(({ path }) => !roots || roots.some((root) => path.startsWith(`${root}/`)))
       .filter(({ name }) => extensions.includes(name.split('.').pop()?.toLocaleLowerCase() ?? '')
         && name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
       .map(({ path }) => path),

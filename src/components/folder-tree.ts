@@ -1,4 +1,5 @@
 import type { DesktopBridge, FolderListing } from '../lib/desktop-bridge';
+import { createFileIcon } from './file-icon';
 
 export function createFolderTree(
   bridge: DesktopBridge,
@@ -27,7 +28,10 @@ export function createFolderTree(
         button.type = 'button';
         button.className = 'folder-file';
         button.dataset.folderFile = entry.path;
-        button.textContent = entry.name;
+        const label = document.createElement('span');
+        label.className = 'folder-entry-name';
+        label.textContent = entry.name;
+        button.append(createFileIcon(entry.name), label);
         button.title = entry.supported ? entry.path : `${entry.name} — unsupported file`;
         button.disabled = !entry.supported;
         button.addEventListener('click', () => openFile(entry.path));
@@ -41,7 +45,13 @@ export function createFolderTree(
   function folder(path: string, name: string, initial?: FolderListing) {
     const details = document.createElement('details');
     const summary = document.createElement('summary');
-    summary.textContent = name;
+    const chevron = document.createElement('span');
+    chevron.className = 'folder-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.className = 'folder-entry-name';
+    label.textContent = name;
+    summary.append(chevron, createFileIcon(name, 'folder'), label);
     summary.title = path;
     const children = document.createElement('div');
     children.className = 'folder-children';
@@ -90,5 +100,6 @@ export function createFolderTree(
       select(activePath);
     },
     get size() { return roots.size; },
+    get paths() { return [...roots.keys()]; },
   };
 }
