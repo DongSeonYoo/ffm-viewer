@@ -2354,11 +2354,14 @@ export async function createApp(
       await queueDocument(hit.path);
       const tab = activeTab();
       if (!tab || tab.payload.path !== hit.path) return;
-      const found = findOpenTabMatches([tab], query, new Map());
+      const documents = new Map<string, OpenTabSearchDocument>();
+      const found = findOpenTabMatches([tab], query, documents);
+      const document = documents.get(tab.id);
+      const source = document?.kind === 'code' ? document.source : '';
       let match = found[0];
       for (const candidate of found) {
         const occurrence = candidate.kind === 'markdown' ? candidate.occurrence
-          : [...codeSource(tab).slice(0, candidate.from).matchAll(new RegExp(escapeRegExp(query), 'giu'))].length;
+          : [...source.slice(0, candidate.from).matchAll(new RegExp(escapeRegExp(query), 'giu'))].length;
         if (occurrence > hit.occurrence) break;
         match = candidate;
       }

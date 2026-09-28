@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from './app-shell';
+import * as jsonFormatting from './lib/json-document';
 import type {
   DesktopBridge,
   DocumentPayload,
@@ -156,7 +157,7 @@ describe('createApp', () => {
     expect(document.querySelector('.empty-state')?.textContent).toBe('drop a file');
     expect(document.querySelector('.empty-state button')).toBeNull();
     expect(document.querySelector('.empty-state h1')).toBeNull();
-    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.7.0');
+    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.7.1');
     expect(Array.from(document.querySelectorAll('.sidebar-section-chevron'))
       .every(({ textContent }) => textContent === '')).toBe(true);
   });
@@ -348,6 +349,29 @@ describe('createApp', () => {
     await vi.waitFor(() => expect(bridge.readDirectory).toHaveBeenCalledTimes(3));
     expect(document.querySelector('.sidebar-folders')?.children).toHaveLength(1);
     expect(document.querySelector('[data-section-count="folders"]')?.textContent).toBe('1');
+  });
+
+  it('reuses the formatted JSON when locating a late workspace search occurrence', async () => {
+    const payload = jsonDocument(JSON.stringify(Array.from({ length: 110 }, (_, id) => ({ id, value: 'needle' })), null, 2));
+    const { bridge } = createBridge({ [payload.path]: payload });
+    vi.mocked(bridge.readDirectory).mockResolvedValue({ path:'/tmp', name:'tmp', entries:[] });
+    vi.mocked(bridge.searchWorkspaceContents).mockResolvedValue({
+      matches:[{ path:payload.path, line:400, occurrence:99, preview:'needle' }], skipped:0, truncated:false,
+    });
+    const format = vi.spyOn(jsonFormatting, 'formatJsonDocument');
+    try {
+      await createApp(document.querySelector('#app')!, bridge);
+      vi.mocked(bridge.onFileDropped).mock.calls[0]![0]('/tmp');
+      await vi.waitFor(() => expect(document.querySelector('.folder-tree summary')).not.toBeNull());
+      window.dispatchEvent(new KeyboardEvent('keydown', { key:'k', metaKey:true }));
+      const input = document.querySelector<HTMLInputElement>('.content-search input')!;
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input'));
+      await vi.waitFor(() => expect(document.querySelector('.content-search-result')).not.toBeNull());
+      document.querySelector<HTMLButtonElement>('.content-search-result')!.click();
+      await vi.waitFor(() => expect(document.querySelector('.cm-activeLine')?.textContent).toContain('needle'));
+      expect(format.mock.calls.length).toBeLessThanOrEqual(2);
+    } finally { format.mockRestore(); }
   });
 
   it('shows substantial Markdown navigation only beside the reading surface', async () => {

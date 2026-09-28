@@ -1,6 +1,8 @@
 import type { DesktopBridge, FolderListing } from '../lib/desktop-bridge';
 import { createFileIcon } from './file-icon';
 
+const PAGE_SIZE = 100;
+
 export function createFolderTree(
   bridge: DesktopBridge,
   openFile: (path: string) => void,
@@ -20,26 +22,41 @@ export function createFolderTree(
 
   function renderEntries(listing: FolderListing, container: HTMLElement) {
     container.replaceChildren();
-    for (const entry of listing.entries) {
-      if (entry.directory) {
-        container.append(folder(entry.path, entry.name));
-      } else {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'folder-file';
-        button.dataset.folderFile = entry.path;
-        const label = document.createElement('span');
-        label.className = 'folder-entry-name';
-        label.textContent = entry.name;
-        button.append(createFileIcon(entry.name), label);
-        button.title = entry.supported ? entry.path : `${entry.name} — unsupported file`;
-        button.disabled = !entry.supported;
-        button.addEventListener('click', () => openFile(entry.path));
-        container.append(button);
+    if (!listing.entries.length) { container.textContent = 'Empty folder'; return; }
+    let offset = 0;
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'folder-file folder-more';
+    const appendPage = () => {
+      more.remove();
+      const end = Math.min(offset + PAGE_SIZE, listing.entries.length);
+      for (const entry of listing.entries.slice(offset, end)) {
+        if (entry.directory) {
+          container.append(folder(entry.path, entry.name));
+        } else {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'folder-file';
+          button.dataset.folderFile = entry.path;
+          const label = document.createElement('span');
+          label.className = 'folder-entry-name';
+          label.textContent = entry.name;
+          button.append(createFileIcon(entry.name), label);
+          button.title = entry.supported ? entry.path : `${entry.name} — unsupported file`;
+          button.disabled = !entry.supported;
+          button.addEventListener('click', () => openFile(entry.path));
+          container.append(button);
+        }
       }
-    }
-    if (!listing.entries.length) container.textContent = 'Empty folder';
-    select(activePath);
+      offset = end;
+      if (offset < listing.entries.length) {
+        more.textContent = `Show more (${listing.entries.length - offset} remaining)`;
+        container.append(more);
+      }
+      select(activePath);
+    };
+    more.addEventListener('click', appendPage);
+    appendPage();
   }
 
   function folder(path: string, name: string, initial?: FolderListing) {
@@ -57,26 +74,29 @@ export function createFolderTree(
     children.className = 'folder-children';
     details.append(summary, children);
     let loading = false;
-    let initialToggle = Boolean(initial);
+    let loaded = Boolean(initial);
     if (initial) {
       details.open = true;
       renderEntries(initial, children);
     }
     details.addEventListener('toggle', async () => {
-      if (initialToggle) {
-        initialToggle = false;
+      if (!details.open) {
+        children.replaceChildren();
+        loaded = false;
         return;
       }
-      if (!details.open || loading) return;
+      if (loaded || loading) return;
       loading = true;
       children.textContent = 'Loading…';
       children.setAttribute('aria-busy', 'true');
       try {
         const listing = await bridge.readDirectory(path);
+        if (!details.open || !details.isConnected) return;
         if (!listing) throw new Error('This folder no longer exists.');
         renderEntries(listing, children);
+        loaded = true;
       } catch (error) {
-        children.textContent = `${error instanceof Error ? error.message : String(error)} Close and reopen to retry.`;
+        if (details.open) children.textContent = `${error instanceof Error ? error.message : String(error)} Close and reopen to retry.`;
       } finally {
         loading = false;
         children.removeAttribute('aria-busy');

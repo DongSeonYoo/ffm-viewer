@@ -1,7 +1,9 @@
-import { json, jsonLanguage } from '@codemirror/lang-json';
+import { json } from '@codemirror/lang-json';
 import {
   foldGutter,
   foldKeymap,
+  ensureSyntaxTree,
+  forceParsing,
   HighlightStyle,
   syntaxHighlighting,
   syntaxTree,
@@ -465,6 +467,19 @@ export function createJsonCodeView(source: string): CodeViewElement {
 
   let outlineTimer: number | undefined;
   let outlineFrame: number | undefined;
+  const buildOutline = () => {
+    outlineTimer = undefined;
+    // Share CodeMirror's tree; yield between small parse slices to keep input responsive.
+    const tree = ensureSyntaxTree(view.state, source.length, 8);
+    if (!tree) {
+      outlineTimer = window.setTimeout(buildOutline);
+      return;
+    }
+    forceParsing(view, source.length, 0);
+    outline.replaceChildren();
+    outline.removeAttribute('aria-busy');
+    populateOutline(outline, view, source, tree.topNode);
+  };
   if (source.length > MAX_OUTLINE_CHARACTERS) {
     outline.removeAttribute('aria-busy');
     outlineStatus.textContent = 'Outline is off for very large JSON.';
@@ -472,13 +487,7 @@ export function createJsonCodeView(source: string): CodeViewElement {
     // ponytail: a worker can replace this ceiling if large-file outlines become necessary.
     outlineFrame = window.requestAnimationFrame(() => {
       outlineFrame = undefined;
-      outlineTimer = window.setTimeout(() => {
-        outlineTimer = undefined;
-        const outlineTree = jsonLanguage.parser.parse(source);
-        outline.replaceChildren();
-        outline.removeAttribute('aria-busy');
-        populateOutline(outline, view, source, outlineTree.topNode);
-      });
+      outlineTimer = window.setTimeout(buildOutline);
     });
   }
   if (DIAGNOSTICS_ENABLED) {

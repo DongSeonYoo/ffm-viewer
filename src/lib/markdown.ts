@@ -115,20 +115,25 @@ export function renderMarkdown(source: string): string {
   });
   const rendered = parser.parse(source) as string;
 
-  return DOMPurify.sanitize(rendered, {
-    ALLOWED_TAGS: [...ALLOWED_TAGS],
-    ALLOWED_ATTR: [
-      'alt',
-      'checked',
-      'class',
-      'disabled',
-      'href',
-      'id',
-      'src',
-      'title',
-      'type',
-    ],
-    ALLOW_DATA_ATTR: false,
-    FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form'],
-  });
+  try {
+    return DOMPurify.sanitize(rendered, {
+      ALLOWED_TAGS: [...ALLOWED_TAGS],
+      ALLOWED_ATTR: [
+        'alt',
+        'checked',
+        'class',
+        'disabled',
+        'href',
+        'id',
+        'src',
+        'title',
+        'type',
+      ],
+      ALLOW_DATA_ATTR: false,
+      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form'],
+    });
+  } finally {
+    // Removal diagnostics retain DOM nodes; the viewer only needs the sanitized string.
+    DOMPurify.removed = [];
+  }
 }

@@ -87,6 +87,7 @@ describe('createJsonCodeView', () => {
   });
 
   it('shows formatted read-only code and top-level outline keys', async () => {
+    const parse = vi.spyOn(jsonLanguage.parser, 'parse');
     const source = formatJsonDocument(
       '{"service":{"name":"api"},"ready":true}',
     );
@@ -97,6 +98,8 @@ describe('createJsonCodeView', () => {
     await vi.waitFor(() => expect(outline?.textContent).toContain('service'));
     expect(outline?.textContent).toContain('ready');
     expect(outline?.textContent).not.toContain('name');
+    expect(parse).not.toHaveBeenCalled();
+    parse.mockRestore();
     expect(viewer.querySelector('.cm-lineNumbers')).not.toBeNull();
     const content = viewer.querySelector<HTMLElement>('.cm-content');
     expect(content?.getAttribute('aria-readonly')).toBe('true');

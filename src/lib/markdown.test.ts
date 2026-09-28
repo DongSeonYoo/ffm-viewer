@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderMarkdown } from './markdown';
+import DOMPurify from 'dompurify';
 
 describe('renderMarkdown', () => {
   it('renders readable headings, paragraphs, and stable heading anchors', () => {
@@ -57,5 +58,6 @@ describe('renderMarkdown', () => {
     expect(html).toContain('safe');
     expect(html).toContain('unsafe');
     expect(html).not.toContain('javascript:');
+    expect(DOMPurify.removed).toHaveLength(0);
   });
 });
