@@ -156,7 +156,7 @@ describe('createApp', () => {
     expect(document.querySelector('.empty-state')?.textContent).toBe('drop a file');
     expect(document.querySelector('.empty-state button')).toBeNull();
     expect(document.querySelector('.empty-state h1')).toBeNull();
-    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.6.0');
+    expect(document.querySelector('[data-app-version]')?.textContent).toContain('v0.7.0');
     expect(Array.from(document.querySelectorAll('.sidebar-section-chevron'))
       .every(({ textContent }) => textContent === '')).toBe(true);
   });
@@ -167,6 +167,44 @@ describe('createApp', () => {
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', metaKey: true }));
     await vi.waitFor(() => expect(bridge.chooseDocuments).toHaveBeenCalledOnce());
+  });
+
+  it('remembers successful file and folder opens across launches and reopens recent folders', async () => {
+    const payload = markdownDocument();
+    const { bridge, requestOpen } = createBridge({ [payload.path]: payload });
+    vi.mocked(bridge.readDirectory).mockImplementation(async (path) => path === '/tmp/project'
+      ? { path, name: 'project', entries: [] } : null);
+    await createApp(document.querySelector('#app')!, bridge);
+    requestOpen(payload.path);
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
+    vi.mocked(bridge.onFileDropped).mock.calls[0]![0]('/tmp/project');
+    await vi.waitFor(() => expect(document.querySelector('.folder-tree summary')).not.toBeNull());
+
+    await createApp(document.querySelector('#app')!, bridge);
+    expect(Array.from(document.querySelectorAll<HTMLElement>('[data-recent-path]'))
+      .map((item) => item.dataset.recentPath)).toEqual(['/tmp/project', payload.path]);
+    document.querySelector<HTMLButtonElement>('[data-recent-path="/tmp/project"]')!.click();
+    await vi.waitFor(() => expect(document.querySelector('.folder-tree summary')?.textContent).toBe('project'));
+    document.querySelector<HTMLButtonElement>(`[data-recent-path="${payload.path}"]`)!.click();
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
+    expect(JSON.parse(window.localStorage.getItem('ffm.recentDocuments')!)).toEqual([
+      { path: payload.path, directory: false }, { path: '/tmp/project', directory: true },
+    ]);
+  });
+
+  it('bounds and validates recent history and keeps it available after a missing file', async () => {
+    window.localStorage.setItem('ffm.recentDocuments', JSON.stringify([
+      null, { path: 'relative.md', directory: false }, { path: '/bad-kind', directory: 1 },
+      ...Array.from({ length: 20 }, (_, i) => ({ path: `/tmp/${i}.md`, directory: false })),
+      { path: '/tmp/0.md', directory: false },
+    ]));
+    const { bridge } = createBridge();
+    await createApp(document.querySelector('#app')!, bridge);
+    expect(document.querySelectorAll('[data-recent-path]')).toHaveLength(12);
+    document.querySelector<HTMLButtonElement>('[data-recent-path="/tmp/0.md"]')!.click();
+    await vi.waitFor(() => expect(document.querySelector('.error-state')).not.toBeNull());
+    expect(document.querySelectorAll('[data-recent-path]')).toHaveLength(12);
+    expect(document.querySelector<HTMLButtonElement>('[data-recent-path="/tmp/0.md"]')?.disabled).toBe(false);
   });
 
   it('opens every document selected in the native dialog', async () => {

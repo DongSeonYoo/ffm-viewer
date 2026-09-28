@@ -31,6 +31,23 @@ const WATCH_WARNING = 'Live refresh paused. Reopen the document to retry.';
 const RECOVERY_WARNING = 'Recovery unavailable. Keep this tab open or save it to a file.';
 const SHORTCUT_DIAGNOSTICS_ENABLED = import.meta.env.VITE_FFM_DIAGNOSTICS === '1';
 const THEME_STORAGE_KEY = 'ffm.theme';
+const RECENT_STORAGE_KEY = 'ffm.recentDocuments';
+const MAX_RECENT_DOCUMENTS = 12;
+interface RecentDocument { path: string; directory: boolean }
+
+function readRecentDocuments(): RecentDocument[] {
+  try {
+    const stored: unknown = JSON.parse(window.localStorage.getItem(RECENT_STORAGE_KEY) ?? '[]');
+    if (!Array.isArray(stored)) return [];
+    const seen = new Set<string>();
+    return stored.filter((entry): entry is RecentDocument => {
+      if (!entry || typeof entry.path !== 'string' || !entry.path.startsWith('/')
+        || typeof entry.directory !== 'boolean' || seen.has(entry.path)) return false;
+      seen.add(entry.path);
+      return true;
+    }).slice(0, MAX_RECENT_DOCUMENTS);
+  } catch { return []; }
+}
 const SEARCH_FORMAT_STORAGE_KEY = 'ffm.searchFormats';
 const APP_CHANNEL = import.meta.env.VITE_FFM_CHANNEL
   || (import.meta.env.DEV ? 'preview' : 'release');
@@ -277,12 +294,44 @@ function createOpenButton(
   return button;
 }
 
-function createEmptyState(): HTMLElement {
+function createEmptyState(recent: readonly RecentDocument[], onOpen: (path: string) => Promise<void>): HTMLElement {
   const state = document.createElement('section');
   state.className = 'empty-state';
   const hint = document.createElement('p');
   hint.textContent = 'drop a file';
   state.append(hint);
+  if (recent.length) {
+    const label = document.createElement('h2');
+    label.className = 'recent-heading';
+    label.textContent = 'Recent';
+    const list = document.createElement('ul');
+    list.className = 'recent-documents';
+    list.setAttribute('aria-label', 'Recent files and folders');
+    for (const entry of recent) {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'recent-document';
+      button.dataset.recentPath = entry.path;
+      button.title = entry.path;
+      button.setAttribute('aria-label', `${entry.directory ? 'Folder' : 'File'}: ${fileName(entry.path)}`);
+      const copy = document.createElement('span');
+      copy.className = 'recent-document-copy';
+      const name = document.createElement('strong');
+      name.textContent = fileName(entry.path);
+      const location = document.createElement('small');
+      location.textContent = entry.path;
+      copy.append(name, location);
+      button.append(createFileIcon(entry.path, entry.directory ? 'folder' : undefined), copy);
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try { await onOpen(entry.path); } finally { button.disabled = false; }
+      });
+      item.append(button);
+      list.append(item);
+    }
+    state.append(label, list);
+  }
   return state;
 }
 
@@ -518,6 +567,14 @@ export async function createApp(
 ): Promise<void> {
   document.documentElement.dataset.theme = readThemePreference();
   const enabledSearchFormats = readSearchFormats();
+  let recentDocuments = readRecentDocuments();
+  const rememberDocument = (path: string, directory: boolean, previousPath?: string) => {
+    recentDocuments = [{ path, directory }, ...recentDocuments.filter(
+      (entry) => entry.path !== path && entry.path !== previousPath,
+    )].slice(0, MAX_RECENT_DOCUMENTS);
+    try { window.localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(recentDocuments)); }
+    catch { /* Opening documents still works when storage is unavailable. */ }
+  };
   const tabs: OpenTab[] = [];
   const history: NavigationEntry[] = [];
   let historyIndex = -1;
@@ -853,6 +910,7 @@ export async function createApp(
         const renamed = await bridge.renameDocument(path, name);
         if (!tabs.includes(tab)) return;
         tab.payload = { ...tab.payload, path: renamed.path, name: renamed.name };
+        rememberDocument(renamed.path, false, path);
         renderChrome();
         if (activeId === tab.id) document.title = `${renamed.name} — FFM Viewer`;
         refreshQuickSwitcherResults?.();
@@ -1056,6 +1114,7 @@ export async function createApp(
     const detail = document.createElement('p');
     detail.textContent = message;
     state.append(title, detail, createOpenButton('Open another document', chooseDocuments));
+    if (recentDocuments.length) state.append(createEmptyState(recentDocuments, queuePath));
     viewport.append(state);
     renderWarning();
     renderFormatHint();
@@ -1073,7 +1132,7 @@ export async function createApp(
     outlineSection.section.hidden = tab?.payload.kind !== 'json';
     if (!tab) {
       shell.className = 'app-shell';
-      viewport.append(createEmptyState());
+      viewport.append(createEmptyState(recentDocuments, queuePath));
       renderWarning();
       renderFormatHint();
       document.title = 'FFM Viewer';
@@ -1623,6 +1682,7 @@ export async function createApp(
   async function openDocument(path: string): Promise<void> {
     const direct = tabs.find((tab) => tab.payload.path === path);
     if (direct) {
+      rememberDocument(direct.payload.path, false);
       if (direct.id === activeId) void refreshFileTab(direct.id);
       else activateTab(direct.id);
       return;
@@ -1631,6 +1691,7 @@ export async function createApp(
     const fileWarning = await installActiveWatcher(path);
     try {
       const payload = await bridge.readDocument(path);
+      rememberDocument(payload.path, false);
       const watcherOwnershipChanged = activationRevision !== revisionBeforeOpen;
       const existing = tabs.find((tab) => tab.payload.path === payload.path);
       if (existing) {
@@ -1697,6 +1758,7 @@ export async function createApp(
         return;
       }
       folderTree.add(listing);
+      rememberDocument(listing.path, true);
       closeFileSearch();
       closeQuickSwitcher();
       commandCenter.querySelector('span:nth-child(2)')!.textContent = 'Search files in folders…';
@@ -1704,6 +1766,7 @@ export async function createApp(
       foldersSection.section.hidden = false;
       foldersSection.count.textContent = String(folderTree.size);
       setSidebarCollapsed(false);
+      if (!activeTab()) renderActive();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const tab = activeTab();

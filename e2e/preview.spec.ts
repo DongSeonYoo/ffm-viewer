@@ -38,13 +38,30 @@ test('folder navigation opens files on demand and disables unsupported entries',
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(540);
 });
 
+test('recent files and folders survive a reload and reopen from the empty screen', async ({ page }) => {
+  await page.goto('/?fixture=folder');
+  await page.locator('.folder-tree').getByRole('button', { name: 'quiet-document.md', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
+  await page.keyboard.press('Control+w');
+  await expect(page.getByRole('list', { name: 'Recent files and folders' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'File: quiet-document.md', exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'File: quiet-document.md', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
+  await page.keyboard.press('Control+w');
+  await page.getByRole('button', { name: 'Folder: fixtures', exact: true }).click();
+  await expect(page.locator('.folder-tree summary').first()).toContainText('Reading');
+  await page.setViewportSize({ width: 540, height: 760 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(540);
+});
+
 test('Markdown opens as a focused article rather than an editor', async ({ page }) => {
   await page.goto('/?fixture=markdown');
 
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
   await expect(page.locator('.markdown-document pre')).toContainText('render');
   await expect(page.locator('textarea')).toHaveCount(0);
-  await expect(page.locator('[data-app-version]')).toHaveText('v0.6.0 · preview');
+  await expect(page.locator('[data-app-version]')).toHaveText('v0.7.0 · preview');
   await expect(page.locator('.sidebar-outline')).not.toBeVisible();
   await expect(page.locator('.markdown-toc')).toHaveCount(0);
 
