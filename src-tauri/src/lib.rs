@@ -1,5 +1,6 @@
 mod document;
 mod folders;
+mod open_dialog;
 mod open_requests;
 mod recovery;
 mod search;
@@ -195,6 +196,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             exit_application,
+            open_dialog::choose_documents,
             mark_file_search_ready,
             document::read_document,
             folders::read_directory,

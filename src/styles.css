@@ -1249,6 +1249,23 @@ a:focus-visible,
   list-style: none;
 }
 
+.recent-search {
+  width: min(100%, 560px);
+  min-width: 0;
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+}
+.recent-search::placeholder { color: var(--ink-soft); }
+.recent-search:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.recent-status:empty { display: none; }
+.empty-state .recent-status { padding: 12px 8px; }
+
 .recent-document {
   display: flex;
   width: 100%;

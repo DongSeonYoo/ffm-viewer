@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { message, open, save } from '@tauri-apps/plugin-dialog';
+import { message, save } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type {
   DesktopBridge,
@@ -48,22 +48,8 @@ export function createTauriBridge(): DesktopBridge {
     readDirectory(path) {
       return invoke<FolderListing | null>('read_directory', { path });
     },
-    async chooseDocuments() {
-      const selected = await open({
-        multiple: true,
-        directory: false,
-        filters: [
-          {
-            name: 'Developer documents',
-            extensions: [
-              'md', 'markdown', 'json', 'txt', 'yaml', 'yml', 'toml',
-              'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg',
-            ],
-          },
-        ],
-      });
-      if (Array.isArray(selected)) return selected;
-      return typeof selected === 'string' ? [selected] : [];
+    chooseDocuments() {
+      return invoke<string[]>('choose_documents');
     },
 
     readDocument(path) {

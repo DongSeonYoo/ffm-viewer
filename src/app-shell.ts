@@ -304,33 +304,75 @@ function createEmptyState(recent: readonly RecentDocument[], onOpen: (path: stri
     const label = document.createElement('h2');
     label.className = 'recent-heading';
     label.textContent = 'Recent';
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'recent-search';
+    search.placeholder = 'Search recent…';
+    search.setAttribute('aria-label', 'Search recent files and folders');
+    disableWritingAssistance(search);
     const list = document.createElement('ul');
     list.className = 'recent-documents';
     list.setAttribute('aria-label', 'Recent files and folders');
-    for (const entry of recent) {
-      const item = document.createElement('li');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'recent-document';
-      button.dataset.recentPath = entry.path;
-      button.title = entry.path;
-      button.setAttribute('aria-label', `${entry.directory ? 'Folder' : 'File'}: ${fileName(entry.path)}`);
-      const copy = document.createElement('span');
-      copy.className = 'recent-document-copy';
-      const name = document.createElement('strong');
-      name.textContent = fileName(entry.path);
-      const location = document.createElement('small');
-      location.textContent = entry.path;
-      copy.append(name, location);
-      button.append(createFileIcon(entry.path, entry.directory ? 'folder' : undefined), copy);
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        try { await onOpen(entry.path); } finally { button.disabled = false; }
-      });
-      item.append(button);
-      list.append(item);
-    }
-    state.append(label, list);
+    const status = document.createElement('p');
+    status.className = 'recent-status';
+    status.setAttribute('role', 'status');
+    const render = () => {
+      const tokens = search.value.normalize('NFC').toLowerCase().trim().split(/\s+/).filter(Boolean);
+      list.replaceChildren();
+      for (const entry of recent) {
+        const path = entry.path.normalize('NFC').toLowerCase();
+        const matches = tokens.every((token) => {
+          const candidates = token.includes('/') ? [path] : path.split('/');
+          return candidates.some((candidate) => {
+            let cursor = 0;
+            for (const character of token) {
+              const index = candidate.indexOf(character, cursor);
+              if (index < 0) return false;
+              cursor = index + character.length;
+            }
+            return true;
+          });
+        });
+        if (!matches) continue;
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'recent-document';
+        button.dataset.recentPath = entry.path;
+        button.title = entry.path;
+        button.setAttribute('aria-label', `${entry.directory ? 'Folder' : 'File'}: ${fileName(entry.path)}`);
+        const copy = document.createElement('span');
+        copy.className = 'recent-document-copy';
+        const name = document.createElement('strong');
+        name.textContent = fileName(entry.path);
+        const location = document.createElement('small');
+        location.textContent = entry.path;
+        copy.append(name, location);
+        button.append(createFileIcon(entry.path, entry.directory ? 'folder' : undefined), copy);
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try { await onOpen(entry.path); } finally { button.disabled = false; }
+        });
+        item.append(button);
+        list.append(item);
+      }
+      status.textContent = list.childElementCount ? '' : 'No recent matches';
+    };
+    search.addEventListener('input', render);
+    search.addEventListener('keydown', (event) => {
+      if (event.isComposing) return;
+      if (event.key === 'Enter' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        const first = list.querySelector<HTMLButtonElement>('button');
+        if (event.key === 'Enter') first?.click();
+        else first?.focus();
+      } else if (event.key === 'Escape') {
+        search.value = '';
+        render();
+      }
+    });
+    render();
+    state.append(label, search, list, status);
   }
   return state;
 }
@@ -1776,10 +1818,23 @@ export async function createApp(
     }
   }
 
+  let choosingDocuments = false;
   async function chooseDocuments(): Promise<void> {
-    clearActiveHistoryDestination();
-    const paths = await bridge.chooseDocuments();
-    for (const path of paths) await queueDocument(path);
+    if (choosingDocuments) return;
+    choosingDocuments = true;
+    try {
+      clearActiveHistoryDestination();
+      const paths = await bridge.chooseDocuments();
+      for (const path of paths) await queuePath(path);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const tab = activeTab();
+      if (tab) tab.warning = message;
+      else startupWarning = message;
+      renderWarning();
+    } finally {
+      choosingDocuments = false;
+    }
   }
 
   const closeQuickSwitcher = (restoreFocus = false) => {

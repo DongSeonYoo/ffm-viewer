@@ -208,11 +208,13 @@ describe('createApp', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-recent-path="/tmp/0.md"]')?.disabled).toBe(false);
   });
 
-  it('opens every document selected in the native dialog', async () => {
+  it('opens selected files and folders and immediately remembers successful opens', async () => {
     const first = markdownDocument('# First');
     const second = { ...markdownDocument('# Second'), path: '/tmp/second.md', name: 'second.md' };
     const { bridge } = createBridge({ [first.path]: first, [second.path]: second });
-    vi.mocked(bridge.chooseDocuments).mockResolvedValue([first.path, second.path]);
+    vi.mocked(bridge.chooseDocuments).mockResolvedValue([first.path, second.path, '/tmp/project']);
+    vi.mocked(bridge.readDirectory).mockImplementation(async (path) => path === '/tmp/project'
+      ? { path, name: 'project', entries: [] } : null);
     await createApp(document.querySelector('#app')!, bridge);
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', metaKey: true }));
@@ -223,6 +225,43 @@ describe('createApp', () => {
         expect.stringContaining('readme.md'),
         expect.stringContaining('second.md'),
       ]);
+    await vi.waitFor(() => expect(document.querySelector('.folder-tree summary')?.textContent).toBe('project'));
+    expect(JSON.parse(window.localStorage.getItem('ffm.recentDocuments')!)).toEqual([
+      { path: '/tmp/project', directory: true },
+      { path: second.path, directory: false },
+      { path: first.path, directory: false },
+    ]);
+  });
+
+  it('fuzzy filters recent names and paths without changing history, and opens with Enter', async () => {
+    const payload = markdownDocument();
+    window.localStorage.setItem('ffm.recentDocuments', JSON.stringify([
+      { path: '/tmp/novaid/file.entity.json', directory: false },
+      { path: payload.path, directory: false },
+      { path: '/Users/reader/demo/file.entity.json', directory: false },
+    ]));
+    const { bridge } = createBridge({ [payload.path]: payload });
+    await createApp(document.querySelector('#app')!, bridge);
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Search recent files and folders"]')!;
+    expect(input).not.toBeNull();
+    const search = (value: string) => {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    search('flent NOV');
+    expect(Array.from(document.querySelectorAll<HTMLElement>('[data-recent-path]')).map((el) => el.dataset.recentPath))
+      .toEqual(['/tmp/novaid/file.entity.json']);
+    search('no-match-at-all');
+    expect(document.querySelectorAll('[data-recent-path]')).toHaveLength(0);
+    expect(document.querySelector('.recent-status')?.textContent).toBe('No recent matches');
+    search('');
+    expect(document.querySelectorAll('[data-recent-path]')).toHaveLength(3);
+    search('rdme');
+    expect(Array.from(document.querySelectorAll<HTMLElement>('[data-recent-path]')).map((el) => el.dataset.recentPath))
+      .toEqual([payload.path]);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(document.querySelector('.markdown-document')).not.toBeNull());
+    expect(JSON.parse(window.localStorage.getItem('ffm.recentDocuments')!)[0].path).toBe(payload.path);
   });
 
   it('opens every queued startup document in order', async () => {

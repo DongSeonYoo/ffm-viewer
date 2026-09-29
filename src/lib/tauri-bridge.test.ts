@@ -75,6 +75,15 @@ describe('createTauriBridge', () => {
     expect(tauri.invoke).toHaveBeenCalledWith('watch_document', { path: '/tmp/b.md' });
   });
 
+  it('returns native file and folder selections, including cancellation', async () => {
+    tauri.invoke.mockResolvedValueOnce(['/tmp/readme.md', '/tmp/project']).mockResolvedValueOnce([]);
+    const bridge = createTauriBridge();
+    await expect(bridge.chooseDocuments()).resolves.toEqual(['/tmp/readme.md', '/tmp/project']);
+    await expect(bridge.chooseDocuments()).resolves.toEqual([]);
+    expect(tauri.invoke).toHaveBeenCalledWith('choose_documents');
+    expect(tauri.open).not.toHaveBeenCalled();
+  });
+
   it('renames a document through the native bridge', async () => {
     tauri.invoke.mockResolvedValue({ path: '/tmp/notes.md', name: 'notes.md' });
 

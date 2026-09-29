@@ -45,6 +45,16 @@ test('recent files and folders survive a reload and reopen from the empty screen
   await page.keyboard.press('Control+w');
   await expect(page.getByRole('list', { name: 'Recent files and folders' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'File: quiet-document.md', exact: true })).toBeVisible();
+  const recentSearch = page.getByRole('searchbox', { name: 'Search recent files and folders' });
+  await recentSearch.fill('qtdoc');
+  await expect(page.locator('[data-recent-path]')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'File: quiet-document.md', exact: true })).toBeVisible();
+  await recentSearch.fill('does-not-exist');
+  await expect(page.getByText('No recent matches', { exact: true })).toBeVisible();
+  await recentSearch.press('Escape');
+  await expect(page.locator('[data-recent-path]')).toHaveCount(2);
+  await page.setViewportSize({ width: 540, height: 760 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(540);
   await page.reload();
   await page.getByRole('button', { name: 'File: quiet-document.md', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'A quiet document' })).toBeVisible();
